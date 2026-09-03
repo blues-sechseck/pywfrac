@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pywfrac"
+version = "0.1.0"
+description = "Async client library for Mitsubishi Heavy Industries WF-RAC WiFi module air conditioners"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Daniel", email = "daosthofen@gmail.com" },
+]
+keywords = ["mitsubishi", "wf-rac", "air-conditioner", "hvac"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Home Automation",
+    "Typing :: Typed",
+]
+dependencies = [
+    "aiohttp>=3.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "mypy",
+    "ruff",
+]
+
+[project.urls]
+Homepage = "https://github.com/blues-sechseck/pywfrac"
+"Protocol reference" = "https://github.com/blues-sechseck/Mitsubishi-WF-RAC-Integration/blob/main/ha-integration/docs/wf-rac-module-reference.md"
+Changelog = "https://github.com/blues-sechseck/pywfrac/releases"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pywfrac"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+files = ["src/pywfrac"]
+strict = true
+
+[tool.ruff]
+target-version = "py311"
+# 100, not the default 88: the code this library was extracted from (and its
+# test suite, copied over unchanged) already runs comments/messages past 88
+# in places, and reflowing logic untouched from the integration isn't the
+# point of this migration.
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# Parametrize tables copied verbatim from the integration's test suite - not
+# reflowing data literals that aren't ours to redesign.
+"tests/test_rac_parser.py" = ["E501", "E731"]
