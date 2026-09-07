@@ -716,6 +716,47 @@ def test_command_to_byte_external_temperature_skipped_in_fan_only(parser):
     assert stat_byte[5] == 0xFF
 
 
+@pytest.mark.parametrize(
+    "operation,operation_mode,status_request",
+    [
+        (False, 1, True),
+        (True, 3, True),
+        (False, 1, False),
+        (True, 3, False),
+    ],
+)
+def test_external_temperature_raw_in_frame_follows_the_frame(
+    parser, operation, operation_mode, status_request
+):
+    # What this reports is recorded as the byte that went out and later
+    # compared against the unit's echo, so reporting a value the builder left
+    # at 0xFF would read back as an override the unit never received. Off and
+    # fan_only drop it in both frame kinds - a status request is no exception.
+    stat = _base_stat(
+        Operation=operation,
+        OperationMode=operation_mode,
+        ExternalTemperature=23.5,
+        ServiceDataStatusRequest=status_request,
+    )
+    build = parser.status_request_to_byte if status_request else parser.command_to_byte
+    assert build(stat)[5] == 0xFF
+    assert parser.external_temperature_raw_in_frame(stat) is None
+
+
+@pytest.mark.parametrize("status_request", [True, False])
+def test_external_temperature_raw_in_frame_reports_the_carried_byte(
+    parser, status_request
+):
+    stat = _base_stat(
+        Operation=True,
+        OperationMode=1,
+        ExternalTemperature=23.5,
+        ServiceDataStatusRequest=status_request,
+    )
+    build = parser.status_request_to_byte if status_request else parser.command_to_byte
+    assert parser.external_temperature_raw_in_frame(stat) == build(stat)[5]
+
+
 def test_command_to_byte_external_temperature_out_of_range_raises(parser):
     with pytest.raises(ValueError):
         parser.command_to_byte(

@@ -229,17 +229,17 @@ class RacParser:
         """The byte 5 an outgoing frame built from this state actually carries,
         or None when it carries the 0xFF "use your own sensor" sentinel.
 
-        Status requests carry the override unconditionally (they exist to keep
-        it alive); ordinary commands only in a temperature-controlling mode.
-        The coordinator keeps what went out, because what the unit reports
-        back is only meaningful against the byte it was sent.
+        The same condition both builders use, and it has to stay that way: a
+        caller records this as the byte it sent and later compares the unit's
+        echo against it, so a value reported here that the frame left at 0xFF
+        would read back as an override the unit never received. Status requests
+        are no exception - they carry the value for the same reason a command
+        does, and drop it in the same modes (see
+        _should_encode_external_temperature).
         """
         if aircon_stat.ExternalTemperature is None:
             return None
-        if not (
-            cls._is_status_request(aircon_stat)
-            or cls._should_encode_external_temperature(aircon_stat)
-        ):
+        if not cls._should_encode_external_temperature(aircon_stat):
             return None
         return cls.encode_external_temperature(aircon_stat.ExternalTemperature)
 
