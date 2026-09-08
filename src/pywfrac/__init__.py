@@ -11,7 +11,7 @@ remains the reference for the protocol's field notes.
 from .capabilities import ModelCapabilities, get_capabilities
 from .error_codes import describe_error_code
 from .models.aircon import Aircon, AirconCommands, AirconStat, HomeLeaveModeSetting
-from .parser import RacParser
+from .parser import AIRFLOW_UNKNOWN, RacParser
 from .repository import (
     READ_RESULT_CODES,
     RESULT_CODES,
@@ -35,6 +35,7 @@ __all__ = [
     "READ_RESULT_CODES",
     "describe_result",
     "RacParser",
+    "AIRFLOW_UNKNOWN",
     "Aircon",
     "AirconStat",
     "AirconCommands",

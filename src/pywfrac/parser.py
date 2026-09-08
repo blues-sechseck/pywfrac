@@ -171,6 +171,18 @@ RCV_AIRFLOW_MASKS: Final = {0: 7, 1: 0, 2: 1, 3: 2, 4: 6}
 AIRFLOW_UNKNOWN: Final = len(RCV_AIRFLOW_MASKS)
 
 
+def _airflow_mask(masks: dict[int, int], air_flow: int) -> int:
+    """The nibble for this fan value, or a refusal that says which value."""
+    try:
+        return masks[air_flow]
+    except KeyError:
+        raise ValueError(
+            f"no encoding for AirFlow {air_flow}"
+            + (" (the unit reported a fan step this library cannot read)"
+               if air_flow == AIRFLOW_UNKNOWN else "")
+        ) from None
+
+
 def _empty_stat_bytes() -> bytearray:
     return bytearray([0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 
@@ -395,12 +407,13 @@ class RacParser:
         # Operating Mode
         stat_byte[2] |= CMD_MODE_MASKS.get(aircon_stat.OperationMode, 0)
 
-        # Airflow. Indexed, not .get(..., 0): the frame is a full state block,
-        # and a fan value with no encoding would otherwise leave the nibble
-        # clear, which the module reads back as a real fan step - so a command
-        # for some other field would quietly change the fan as well. Raising
-        # here surfaces as the encode error to_base64() already reports.
-        stat_byte[3] |= CMD_AIRFLOW_MASKS[aircon_stat.AirFlow]
+        # Airflow. Checked rather than defaulted to 0: the frame is a full
+        # state block, and a fan value with no encoding would otherwise leave
+        # the nibble clear, which the module reads back as a real fan step -
+        # so a command for some other field would quietly change the fan as
+        # well. The message names the field because it reaches the caller
+        # through to_base64()'s wrapper, and a bare key says nothing.
+        stat_byte[3] |= _airflow_mask(CMD_AIRFLOW_MASKS, aircon_stat.AirFlow)
 
         # Vertical wind direction
         mask2, mask3 = CMD_WIND_UD_MASKS.get(aircon_stat.WindDirectionUD, (0, 0))
@@ -458,9 +471,9 @@ class RacParser:
         # Operating Mode
         stat_byte[2] |= RCV_MODE_MASKS.get(aircon_stat.OperationMode, 0)
 
-        # Airflow. Indexed rather than defaulted, for the reason given in
+        # Airflow. Checked rather than defaulted, for the reason given in
         # command_to_byte() - both halves travel in the same frame.
-        stat_byte[3] |= RCV_AIRFLOW_MASKS[aircon_stat.AirFlow]
+        stat_byte[3] |= _airflow_mask(RCV_AIRFLOW_MASKS, aircon_stat.AirFlow)
 
         # Vertical wind direction
         if aircon_stat.WindDirectionUD == 0:

@@ -17,12 +17,13 @@ from base64 import b64decode
 
 import pytest
 
+from pywfrac import AIRFLOW_UNKNOWN
 from pywfrac.models.aircon import (
     Aircon,
     AirconStat,
     HomeLeaveModeSetting,
 )
-from pywfrac.parser import AIRFLOW_UNKNOWN, RCV_AIRFLOW_MASKS, RacParser
+from pywfrac.parser import RCV_AIRFLOW_MASKS, RacParser
 from pywfrac.utils import find_match
 
 from .live_captures import LIVE_CAPTURES
@@ -510,14 +511,24 @@ def test_an_unknown_fan_nibble_decodes_out_of_range(parser, nibble):
         ["auto", "quiet", "low", "medium", "high"][ac.AirFlow]
 
 
-def test_a_fan_value_without_an_encoding_is_refused_on_the_command_frame(parser):
-    with pytest.raises(KeyError):
+@pytest.mark.parametrize("build", ["command_to_byte", "receive_to_bytes"])
+def test_a_fan_value_without_an_encoding_is_refused(parser, build):
+    # Both halves travel in the same frame, so both have to refuse.
+    with pytest.raises(ValueError, match="no encoding for AirFlow 5"):
+        getattr(parser, build)(_base_stat(AirFlow=AIRFLOW_UNKNOWN))
+
+
+def test_the_refusal_says_the_value_came_from_the_unit(parser):
+    # The message reaches a caller through to_base64()'s wrapper, where a bare
+    # key would say nothing about what went wrong or where it came from.
+    with pytest.raises(ValueError, match="cannot read"):
         parser.command_to_byte(_base_stat(AirFlow=AIRFLOW_UNKNOWN))
 
 
-def test_a_fan_value_without_an_encoding_is_refused_on_the_receive_frame(parser):
-    with pytest.raises(KeyError):
-        parser.receive_to_bytes(_base_stat(AirFlow=AIRFLOW_UNKNOWN))
+def test_a_fan_value_that_is_merely_wrong_is_refused_without_that_note(parser):
+    with pytest.raises(ValueError, match="no encoding for AirFlow 99") as refusal:
+        parser.command_to_byte(_base_stat(AirFlow=99))
+    assert "cannot read" not in str(refusal.value)
 
 
 def test_an_unencodable_fan_value_fails_the_whole_frame(parser):
