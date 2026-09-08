@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pywfrac"
-version = "0.1.1"
+version = "0.1.2"
 description = "Async client library for Mitsubishi Heavy Industries WF-RAC WiFi module air conditioners"
 readme = "README.md"
 license = "MIT"

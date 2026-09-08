@@ -20,6 +20,26 @@ _LOGGER = logging.getLogger(__name__)
 # configuration.yaml
 _HTTP_LOG = _LOGGER.getChild("http")
 
+# The operator and device ids are what the module checks a write against - a
+# request carrying them is accepted. Debug logs are routinely attached to
+# public issue reports, so they never appear in one. The airco id and the host
+# stay: they say which unit a line is about, they are the only thing that makes
+# a two-unit log readable, and neither lets anyone act on the unit.
+_REDACTED = "**redacted**"
+_REDACT_KEYS = frozenset({"operatorId", "accountId", "deviceId"})
+
+
+def _redact_mapping(value: Any) -> Any:
+    """Copy a request or response with the credential fields removed."""
+    if isinstance(value, dict):
+        return {
+            key: _REDACTED if key in _REDACT_KEYS else _redact_mapping(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_mapping(item) for item in value]
+    return value
+
 # ensure that we don't overwhelm the aircon unit by waiting at least
 # this long between successive requests
 MIN_TIME_BETWEEN_REQUESTS = timedelta(seconds=1)
@@ -227,6 +247,18 @@ class Repository:
             self._ssl_context = ssl_context
         return self._ssl_context
 
+    def _redact_text(self, body: str) -> str:
+        """Same fields as _redact_mapping, for a body not parsed yet.
+
+        The response echoes the ids it was sent, so the values are known and
+        can be replaced literally - which also covers whatever key a firmware
+        branch happens to put them under.
+        """
+        for secret in (self._operator_id, self._device_id):
+            if secret:
+                body = body.replace(secret, _REDACTED)
+        return body
+
     async def _post(
         self,
         command: str,
@@ -244,7 +276,7 @@ class Repository:
             if protocol == "https":
                 request_kwargs["ssl"] = await self._get_ssl_context()
 
-            _HTTP_LOG.debug("POST %s -> %r", url, data)
+            _HTTP_LOG.debug("POST %s -> %r", url, _redact_mapping(data))
             try:
                 async with self._session.post(url, **request_kwargs) as resp:
                     # Read the raw body ourselves (instead of resp.json()) so we
@@ -258,7 +290,7 @@ class Repository:
                         url,
                         resp.status,
                         resp.content_type,
-                        body,
+                        self._redact_text(body),
                     )
                     if resp.status >= 400:
                         raise WfRacCommandError(
@@ -352,7 +384,7 @@ class Repository:
         _HTTP_LOG.debug(
             "Got response from %r: %r",
             self._hostname,
-            json_response,
+            _redact_mapping(json_response),
         )
         self._report_result_code(command, json_response)
         return json_response
