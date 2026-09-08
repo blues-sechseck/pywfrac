@@ -161,6 +161,15 @@ CMD_WIND_LR_MASKS: Final = {
 RCV_MODE_MASKS: Final = {0: 0, 1: 8, 2: 16, 3: 12, 4: 4}
 RCV_AIRFLOW_MASKS: Final = {0: 7, 1: 0, 2: 1, 3: 2, 4: 6}
 
+# What the fan field decodes to when the unit reports a nibble the tables above
+# do not cover. The other fields decoded from the same frame add 1 and keep 0
+# for that case, but AirFlow's 0 is already "auto", so the marker goes past the
+# end of the table instead. It deliberately is not find_match()'s own -1: that
+# is the one out-of-range value a list index accepts silently, and a caller
+# translating the field through its own fan-mode list would report the top fan
+# step rather than noticing that it cannot read the field.
+AIRFLOW_UNKNOWN: Final = len(RCV_AIRFLOW_MASKS)
+
 
 def _empty_stat_bytes() -> bytearray:
     return bytearray([0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
@@ -386,8 +395,12 @@ class RacParser:
         # Operating Mode
         stat_byte[2] |= CMD_MODE_MASKS.get(aircon_stat.OperationMode, 0)
 
-        # Airflow
-        stat_byte[3] |= CMD_AIRFLOW_MASKS.get(aircon_stat.AirFlow, 0)
+        # Airflow. Indexed, not .get(..., 0): the frame is a full state block,
+        # and a fan value with no encoding would otherwise leave the nibble
+        # clear, which the module reads back as a real fan step - so a command
+        # for some other field would quietly change the fan as well. Raising
+        # here surfaces as the encode error to_base64() already reports.
+        stat_byte[3] |= CMD_AIRFLOW_MASKS[aircon_stat.AirFlow]
 
         # Vertical wind direction
         mask2, mask3 = CMD_WIND_UD_MASKS.get(aircon_stat.WindDirectionUD, (0, 0))
@@ -445,8 +458,9 @@ class RacParser:
         # Operating Mode
         stat_byte[2] |= RCV_MODE_MASKS.get(aircon_stat.OperationMode, 0)
 
-        # Airflow
-        stat_byte[3] |= RCV_AIRFLOW_MASKS.get(aircon_stat.AirFlow, 0)
+        # Airflow. Indexed rather than defaulted, for the reason given in
+        # command_to_byte() - both halves travel in the same frame.
+        stat_byte[3] |= RCV_AIRFLOW_MASKS[aircon_stat.AirFlow]
 
         # Vertical wind direction
         if aircon_stat.WindDirectionUD == 0:
@@ -514,7 +528,8 @@ class RacParser:
         ac_device.Operation = 1 == (OPERATION_MASK & content[2])
         ac_device.PresetTemp = content[4] / 2
         ac_device.OperationMode = find_match(60 & content[2], 8, 16, 12, 4) + 1
-        ac_device.AirFlow = find_match(15 & content[3], 7, 0, 1, 2, 6)
+        air_flow = find_match(15 & content[3], 7, 0, 1, 2, 6)
+        ac_device.AirFlow = AIRFLOW_UNKNOWN if air_flow < 0 else air_flow
         ac_device.WindDirectionUD = (
             0
             if content[2] & 192 == 64

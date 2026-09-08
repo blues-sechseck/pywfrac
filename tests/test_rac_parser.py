@@ -22,7 +22,7 @@ from pywfrac.models.aircon import (
     AirconStat,
     HomeLeaveModeSetting,
 )
-from pywfrac.parser import RacParser
+from pywfrac.parser import AIRFLOW_UNKNOWN, RCV_AIRFLOW_MASKS, RacParser
 from pywfrac.utils import find_match
 
 from .live_captures import LIVE_CAPTURES
@@ -485,6 +485,47 @@ def test_receive_to_bytes_round_trips_through_parse_basic_settings(parser, stat_
     assert ac.ModelNr == stat.ModelNr
     assert ac.Vacant == stat.Vacant
     assert ac.CoolHotJudge == stat.CoolHotJudge
+
+
+# --- fan field: a nibble the tables do not cover -------------------------
+#
+# 15 & content[3] spans 0-15 while only {7, 0, 1, 2, 6} are known, so eight
+# values are unaccounted for. find_match() answers -1 for them, and -1 is the
+# one out-of-range index a list accepts without complaint - a caller reading
+# the field through its own fan-mode list would silently report the last entry.
+
+
+@pytest.mark.parametrize("nibble", [3, 4, 5, 8, 9, 10, 11, 12, 13, 15])
+def test_an_unknown_fan_nibble_decodes_out_of_range(parser, nibble):
+    content = parser.receive_to_bytes(_base_stat())
+    content[3] = (content[3] & ~15) | nibble
+    ac = Aircon()
+
+    parser._parse_basic_settings(ac, content)
+
+    assert ac.AirFlow == AIRFLOW_UNKNOWN
+    assert ac.AirFlow not in RCV_AIRFLOW_MASKS
+    # The point of a positive marker: indexing raises instead of wrapping.
+    with pytest.raises(IndexError):
+        ["auto", "quiet", "low", "medium", "high"][ac.AirFlow]
+
+
+def test_a_fan_value_without_an_encoding_is_refused_on_the_command_frame(parser):
+    with pytest.raises(KeyError):
+        parser.command_to_byte(_base_stat(AirFlow=AIRFLOW_UNKNOWN))
+
+
+def test_a_fan_value_without_an_encoding_is_refused_on_the_receive_frame(parser):
+    with pytest.raises(KeyError):
+        parser.receive_to_bytes(_base_stat(AirFlow=AIRFLOW_UNKNOWN))
+
+
+def test_an_unencodable_fan_value_fails_the_whole_frame(parser):
+    # to_base64() is the only way a frame reaches the device, and it turns the
+    # refusal into the encode error its callers already handle - rather than
+    # sending a cleared nibble that the module reads back as a real fan step.
+    with pytest.raises(ValueError, match="Failed to encode aircon state"):
+        parser.to_base64(_base_stat(AirFlow=AIRFLOW_UNKNOWN))
 
 
 def test_receive_to_bytes_entrust_round_trips(parser):
