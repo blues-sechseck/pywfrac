@@ -211,6 +211,23 @@ def is_external_temperature_mode(operation: bool, operation_mode: int) -> bool:
 class RacParser:
     """Parser class that is used to parse WF-RAC data"""
 
+    #: Carry the unit's own power state back to it in a status request.
+    #:
+    #: A status request is built with no set-bits, so a module that honours
+    #: them applies nothing. At least one does not: on firmType WCBN4612L the
+    #: zero in command[2] reads as "power off", and the unit stops the moment
+    #: the request arrives. Setting this makes the frame carry the running
+    #: state together with its set-bit, which confirms the state instead of
+    #: changing it. Measured on two indoor units: result 0, full trailer,
+    #: nothing altered, both running and switched off.
+    #:
+    #: Off by default, because it costs something the empty frame does not: on
+    #: a module that honours set-bits this turns a read into a real power
+    #: write. Only "on" is ever carried - a caller that believes the unit is
+    #: off should not send the request at all, since the state it would carry
+    #: is only as fresh as the caller's last read.
+    carry_power_state = False
+
     @staticmethod
     def encode_external_temperature(temperature: float | None) -> int | None:
         """Encode an external-temperature override to the MHI byte-5 format.
@@ -395,6 +412,10 @@ class RacParser:
             )
             if raw_temperature is not None:
                 stat_byte[5] = raw_temperature
+        if self.carry_power_state and aircon_stat.Operation:
+            # Same encoding as command_to_byte(): bit 0 the value, bit 1 the
+            # set-bit that makes it count.
+            stat_byte[2] |= 3
         return stat_byte
 
     def command_to_byte(self, aircon_stat: AirconStat) -> bytearray:

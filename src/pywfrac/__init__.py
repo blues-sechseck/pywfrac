@@ -9,11 +9,22 @@ remains the reference for the protocol's field notes.
 """
 
 from .capabilities import ModelCapabilities, get_capabilities
+from .enums import AirFlow, OperationMode, WindDirectionLR, WindDirectionUD
 from .error_codes import describe_error_code
 from .models.aircon import Aircon, AirconCommands, AirconStat, HomeLeaveModeSetting
-from .parser import AIRFLOW_UNKNOWN, RacParser
+from .parser import (
+    AIRFLOW_UNKNOWN,
+    EXTERNAL_TEMPERATURE_MAX,
+    EXTERNAL_TEMPERATURE_MIN,
+    SERVICE_DATA_CODE_BY_FIELD,
+    SERVICE_DATA_CODES,
+    SERVICE_DATA_INDOOR_COIL_RAW,
+    RacParser,
+)
 from .repository import (
+    MIN_TIME_BETWEEN_REQUESTS,
     READ_RESULT_CODES,
+    REQUEST_TIMEOUT,
     RESULT_CODES,
     Repository,
     WfRacCommandError,
@@ -36,6 +47,17 @@ __all__ = [
     "describe_result",
     "RacParser",
     "AIRFLOW_UNKNOWN",
+    "OperationMode",
+    "AirFlow",
+    "WindDirectionUD",
+    "WindDirectionLR",
+    "EXTERNAL_TEMPERATURE_MIN",
+    "EXTERNAL_TEMPERATURE_MAX",
+    "SERVICE_DATA_CODES",
+    "SERVICE_DATA_CODE_BY_FIELD",
+    "SERVICE_DATA_INDOOR_COIL_RAW",
+    "MIN_TIME_BETWEEN_REQUESTS",
+    "REQUEST_TIMEOUT",
     "Aircon",
     "AirconStat",
     "AirconCommands",
