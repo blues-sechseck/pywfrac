@@ -682,6 +682,31 @@ def test_status_request_block_leaves_every_set_bit_clear(parser):
     assert list(block) == [0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
 
+@pytest.mark.parametrize(
+    ("carry", "operation", "expected"),
+    [
+        pytest.param(False, True, 0, id="off-by-default"),
+        pytest.param(True, True, 3, id="running-is-confirmed"),
+        pytest.param(True, False, 0, id="stopped-is-never-carried"),
+    ],
+)
+def test_carry_power_state_confirms_a_running_unit(parser, carry, operation, expected):
+    """A module that applies the zero in command[2] reads it as "power off"."""
+    parser.carry_power_state = carry
+    stat = _base_stat(Operation=operation, ServiceDataStatusRequest=(0x11,))
+
+    assert parser.status_request_to_byte(stat)[2] == expected
+
+
+def test_carry_power_state_leaves_the_rest_of_the_frame_alone(parser):
+    parser.carry_power_state = True
+    stat = _base_stat(Operation=True, ServiceDataStatusRequest=(0x11,))
+
+    block = parser.status_request_to_byte(stat)
+
+    assert list(block) == [0, 0, 3, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+
 def test_status_request_block_still_carries_cool_hot_judge(parser):
     # Byte 8 has no set-bit of its own and is carried by every frame; dropping
     # it clears the unit's echo of it in DB5 bit 4 (see status_request_to_byte).
