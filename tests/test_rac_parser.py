@@ -682,29 +682,54 @@ def test_status_request_block_leaves_every_set_bit_clear(parser):
     assert list(block) == [0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
 
+def test_a_status_request_is_empty_unless_it_is_told_to_carry_the_state(parser):
+    stat = _base_stat(Operation=True, PresetTemp=23.0, ServiceDataStatusRequest=(0x11,))
+
+    assert parser.status_request_to_byte(stat) != parser.command_to_byte(stat)
+
+
+def test_a_carrying_status_request_is_the_full_state_block(parser):
+    """The shape the manufacturer's app uses: the state, sent straight back."""
+    parser.status_request_carries_state = True
+    stat = _base_stat(Operation=True, PresetTemp=23.0, ServiceDataStatusRequest=(0x11,))
+
+    assert parser.status_request_to_byte(stat) == parser.command_to_byte(stat)
+
+
 @pytest.mark.parametrize(
-    ("carry", "operation", "expected"),
+    ("index", "name"),
     [
-        pytest.param(False, True, 0, id="off-by-default"),
-        pytest.param(True, True, 3, id="running-is-confirmed"),
-        pytest.param(True, False, 0, id="stopped-is-never-carried"),
+        pytest.param(2, "power, mode and the vertical vane", id="byte-2"),
+        pytest.param(3, "fan step and the vertical vane", id="byte-3"),
+        pytest.param(4, "setpoint", id="byte-4"),
+        pytest.param(12, "horizontal vane and entrust", id="byte-12"),
     ],
 )
-def test_carry_power_state_confirms_a_running_unit(parser, carry, operation, expected):
-    """A module that applies the zero in command[2] reads it as "power off"."""
-    parser.carry_power_state = carry
-    stat = _base_stat(Operation=operation, ServiceDataStatusRequest=(0x11,))
+def test_carrying_fills_the_bytes_the_empty_block_leaves_at_zero(parser, index, name):
+    """These are the bytes a module that applies the empty frame reads as a
+    command to clear the setting - see issue #329."""
+    stat = _base_stat(
+        Operation=True,
+        OperationMode=2,
+        AirFlow=3,
+        WindDirectionUD=3,
+        WindDirectionLR=3,
+        PresetTemp=23.0,
+        ServiceDataStatusRequest=(0x11,),
+    )
+    assert parser.status_request_to_byte(stat)[index] == 0, name
 
-    assert parser.status_request_to_byte(stat)[2] == expected
+    parser.status_request_carries_state = True
+
+    assert parser.status_request_to_byte(stat)[index] != 0, name
 
 
-def test_carry_power_state_leaves_the_rest_of_the_frame_alone(parser):
-    parser.carry_power_state = True
-    stat = _base_stat(Operation=True, ServiceDataStatusRequest=(0x11,))
+def test_the_carried_setpoint_travels_with_its_set_bit(parser):
+    parser.status_request_carries_state = True
+    stat = _base_stat(Operation=True, PresetTemp=23.0, ServiceDataStatusRequest=(0x11,))
 
-    block = parser.status_request_to_byte(stat)
-
-    assert list(block) == [0, 0, 3, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    # int(23.0 / 0.5) = 46, plus the 128 that makes the value count.
+    assert parser.status_request_to_byte(stat)[4] == 46 + 128
 
 
 def test_status_request_block_still_carries_cool_hot_judge(parser):
