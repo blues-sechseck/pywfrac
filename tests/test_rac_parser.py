@@ -215,6 +215,24 @@ def test_parse_temperatures_home_leave_mode_all_six_subcodes_present(parser):
     )
 
 
+def test_parse_temperatures_home_leave_mode_unreadable_airflow(parser):
+    """An unknown nibble has to say so, not read as the last option.
+
+    find_match() answers -1, which a caller indexing its own option list
+    accepts silently and reports as the top fan step.
+    """
+    vals = []
+    # 9 is not one of HOME_LEAVE_MODE_AIRFLOW_BYTES.
+    for sub, value in zip((27, 28, 29, 30, 31, 32), (70, 0, 66, 20, 9, 7)):
+        vals += [-8, 16, sub, value]
+    ac = Aircon()
+
+    parser._parse_temperatures(ac, vals)
+
+    assert ac.HomeLeaveModeForCooling.AirFlow == AIRFLOW_UNKNOWN
+    assert ac.HomeLeaveModeForHeating.AirFlow == 3
+
+
 def test_parse_temperatures_home_leave_mode_partial_does_not_commit(parser):
     # Mirrors AirconStatCoder.byteToStat's all-or-nothing commit: five of six
     # subcodes present must leave both sides None, not a half-filled result.
