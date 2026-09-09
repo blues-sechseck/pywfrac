@@ -211,22 +211,26 @@ def is_external_temperature_mode(operation: bool, operation_mode: int) -> bool:
 class RacParser:
     """Parser class that is used to parse WF-RAC data"""
 
-    #: Carry the unit's own power state back to it in a status request.
+    #: Build a status request from the unit's own state instead of an empty
+    #: block.
     #:
-    #: A status request is built with no set-bits, so a module that honours
-    #: them applies nothing. At least one does not: on firmType WCBN4612L the
-    #: zero in command[2] reads as "power off", and the unit stops the moment
-    #: the request arrives. Setting this makes the frame carry the running
-    #: state together with its set-bit, which confirms the state instead of
-    #: changing it. Measured on two indoor units: result 0, full trailer,
-    #: nothing altered, both running and switched off.
+    #: A status request normally leaves every set-bit clear, and a module that
+    #: honours them applies nothing. At least one does not: on firmType
+    #: WCBN4612L the zeros are taken literally, so the request writes setpoint
+    #: 0 (which the unit clamps up to its heating floor), mode auto, and fan
+    #: and both vanes to their first position.
     #:
-    #: Off by default, because it costs something the empty frame does not: on
-    #: a module that honours set-bits this turns a read into a real power
-    #: write. Only "on" is ever carried - a caller that believes the unit is
-    #: off should not send the request at all, since the state it would carry
-    #: is only as fresh as the caller's last read.
-    carry_power_state = False
+    #: Set this and the request carries the state it was given, with every
+    #: set-bit, so the frame confirms the settings instead of clearing them.
+    #: This is the shape the manufacturer's own app uses for its one status
+    #: request: read the state, then send that same state straight back with
+    #: the request in the trailer.
+    #:
+    #: Off by default, because it turns a read into a real write. The state
+    #: handed in has to be fresh - anything the unit changed since it was read
+    #: is reverted by the echo - so a caller should read immediately before
+    #: building the request rather than reuse a poll from up to a cycle ago.
+    status_request_carries_state = False
 
     @staticmethod
     def encode_external_temperature(temperature: float | None) -> int | None:
@@ -400,6 +404,10 @@ class RacParser:
         it writes byte 5 back to preserve the override, which is the property
         service-data requests were previously fixed on (see #250).
         """
+        if self.status_request_carries_state:
+            # A full state block is a strict superset of the empty one: it
+            # carries byte 8 and byte 5 the same way and fills in the rest.
+            return self.command_to_byte(aircon_stat)
         stat_byte = _empty_stat_bytes()
         if not aircon_stat.CoolHotJudge:
             stat_byte[8] |= 8
@@ -412,10 +420,6 @@ class RacParser:
             )
             if raw_temperature is not None:
                 stat_byte[5] = raw_temperature
-        if self.carry_power_state and aircon_stat.Operation:
-            # Same encoding as command_to_byte(): bit 0 the value, bit 1 the
-            # set-bit that makes it count.
-            stat_byte[2] |= 3
         return stat_byte
 
     def command_to_byte(self, aircon_stat: AirconStat) -> bytearray:
