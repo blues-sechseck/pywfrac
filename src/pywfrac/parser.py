@@ -171,6 +171,17 @@ RCV_AIRFLOW_MASKS: Final = {0: 7, 1: 0, 2: 1, 3: 2, 4: 6}
 AIRFLOW_UNKNOWN: Final = len(RCV_AIRFLOW_MASKS)
 
 
+def _home_leave_airflow(byte: int) -> int:
+    """The Home Leave fan value in that byte, or AIRFLOW_UNKNOWN.
+
+    Same reasoning as AIRFLOW_UNKNOWN itself: find_match() answers -1, which a
+    caller indexing its own option list accepts silently and reports as the
+    last option instead of noticing it cannot read the field.
+    """
+    air_flow = find_match(byte & 15, *HOME_LEAVE_MODE_AIRFLOW_BYTES)
+    return AIRFLOW_UNKNOWN if air_flow < 0 else air_flow
+
+
 def _airflow_mask(masks: dict[int, int], air_flow: int) -> int:
     """The nibble for this fan value, or a refusal that says which value."""
     try:
@@ -696,12 +707,12 @@ class RacParser:
         ac_device.HomeLeaveModeForCooling = HomeLeaveModeSetting(
             TempRule=raw[27] / 2,
             TempSetting=raw[29] / 2,
-            AirFlow=find_match(raw[31] & 15, *HOME_LEAVE_MODE_AIRFLOW_BYTES),
+            AirFlow=_home_leave_airflow(raw[31]),
         )
         ac_device.HomeLeaveModeForHeating = HomeLeaveModeSetting(
             TempRule=raw[28] / 2,
             TempSetting=raw[30] / 2,
-            AirFlow=find_match(raw[32] & 15, *HOME_LEAVE_MODE_AIRFLOW_BYTES),
+            AirFlow=_home_leave_airflow(raw[32]),
         )
 
     @staticmethod
