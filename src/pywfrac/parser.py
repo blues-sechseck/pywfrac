@@ -208,6 +208,23 @@ def is_external_temperature_mode(operation: bool, operation_mode: int) -> bool:
     return operation_mode in (0, 1, 2, 4)
 
 
+def _log_status_request(
+    stat_byte: bytearray, carries_state: bool, operation: bool
+) -> None:
+    """What the status request actually contains.
+
+    Worth logging in full: whether a module applies a frame it was not asked
+    to apply is answered by these eighteen bytes, and reconstructing them
+    from the base64 in a request log is a step nobody should have to take.
+    """
+    _LOGGER.debug(
+        "Status request block: %s (carries state: %s, unit is %s)",
+        bytes(stat_byte).hex(" "),
+        carries_state,
+        "on" if operation else "off",
+    )
+
+
 class RacParser:
     """Parser class that is used to parse WF-RAC data"""
 
@@ -407,7 +424,9 @@ class RacParser:
         if self.status_request_carries_state:
             # A full state block is a strict superset of the empty one: it
             # carries byte 8 and byte 5 the same way and fills in the rest.
-            return self.command_to_byte(aircon_stat)
+            stat_byte = self.command_to_byte(aircon_stat)
+            _log_status_request(stat_byte, True, aircon_stat.Operation)
+            return stat_byte
         stat_byte = _empty_stat_bytes()
         if not aircon_stat.CoolHotJudge:
             stat_byte[8] |= 8
@@ -420,6 +439,7 @@ class RacParser:
             )
             if raw_temperature is not None:
                 stat_byte[5] = raw_temperature
+        _log_status_request(stat_byte, False, aircon_stat.Operation)
         return stat_byte
 
     def command_to_byte(self, aircon_stat: AirconStat) -> bytearray:
