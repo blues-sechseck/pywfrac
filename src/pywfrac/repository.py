@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import Any, cast
 
 import aiohttp
-from aiohttp import ClientConnectionError, ClientSession
+from aiohttp import ClientError, ClientSession
 
 _LOGGER = logging.getLogger(__name__)
 # log http requests/responses to separate logger, to allow easily turning on/off from
@@ -39,6 +39,18 @@ def _redact_mapping(value: Any) -> Any:
     if isinstance(value, list):
         return [_redact_mapping(item) for item in value]
     return value
+
+
+def _printable(raw: bytes) -> str:
+    """Render whatever the module sent, whether or not it is text.
+
+    Escaped rather than replaced: a module that garbles its answer garbles a
+    few bytes of an otherwise readable body, and which byte went wrong where
+    is the whole diagnosis. Carries no redaction of its own - callers pass the
+    result through _redact_text().
+    """
+    return raw.decode("utf-8", errors="backslashreplace")
+
 
 # ensure that we don't overwhelm the aircon unit by waiting at least
 # this long between successive requests
@@ -167,6 +179,23 @@ class WfRacConnectionError(WfRacError):
     """
 
 
+class WfRacMalformedResponseError(WfRacConnectionError):
+    """Raised when the unit answered with something that is not a response.
+
+    These modules do garble their own answers. Overrunning the request
+    trailer makes one serialise binary instead of JSON, and a body that was
+    valid for its first hundred-odd bytes and then carried a byte no text
+    decoder accepts has been seen in the field (#373).
+
+    Classed as a connection failure because that is what it costs the caller:
+    the request never got a verdict, so nothing can be concluded about the
+    command or the account, and the answer is to ask again. It stays
+    distinguishable, though - the unit did answer over this protocol, so
+    unlike a real transport outage this is no reason to rediscover which
+    protocol to speak.
+    """
+
+
 class Repository:
     """Simple Api class to send and get Aircon information"""
 
@@ -259,6 +288,29 @@ class Repository:
                 body = body.replace(secret, _REDACTED)
         return body
 
+    def _parse_body(self, command: str, raw: bytes) -> dict[str, Any]:
+        """Turn one response body into JSON, or say what was wrong with it.
+
+        The message carries the body itself: a garbled answer is only ever
+        diagnosed from the bytes, and this exception is where they would
+        otherwise be lost. Redacted like any other logged body - the answer
+        echoes the ids it was sent.
+        """
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as ex:
+            raise WfRacMalformedResponseError(
+                f"Aircon answered {command!r} with a body that is not UTF-8 "
+                f"({ex}): {self._redact_text(_printable(raw))}"
+            ) from ex
+        try:
+            return cast(dict[str, Any], json.loads(text))
+        except json.JSONDecodeError as ex:
+            raise WfRacMalformedResponseError(
+                f"Aircon answered {command!r} with a body that is not JSON "
+                f"({ex}): {self._redact_text(text)}"
+            ) from ex
+
     async def _post(
         self,
         command: str,
@@ -279,25 +331,34 @@ class Repository:
             _HTTP_LOG.debug("POST %s -> %r", url, _redact_mapping(data))
             try:
                 async with self._session.post(url, **request_kwargs) as resp:
-                    # Read the raw body ourselves (instead of resp.json()) so we
-                    # can log it - and parse it - regardless of the declared
-                    # Content-Type or HTTP status. Some modules send a valid
-                    # JSON body with an incorrect Content-Type (e.g. text/plain),
-                    # and error responses may carry a useful JSON body too.
-                    body = await resp.text()
+                    # Read the raw bytes ourselves (instead of resp.json() or
+                    # resp.text()) so we can log them - and parse them -
+                    # regardless of the declared Content-Type or HTTP status.
+                    # Some modules send a valid JSON body with an incorrect
+                    # Content-Type (e.g. text/plain), and error responses may
+                    # carry a useful JSON body too. Bytes rather than text
+                    # because a module that answers with something that is not
+                    # UTF-8 is precisely the case worth logging, and decoding
+                    # first would raise before the line below could record it.
+                    raw = await resp.read()
+                    body = self._redact_text(_printable(raw))
                     _HTTP_LOG.debug(
                         "<- %s status=%s content_type=%r body=%r",
                         url,
                         resp.status,
                         resp.content_type,
-                        self._redact_text(body),
+                        body,
                     )
                     if resp.status >= 400:
                         raise WfRacCommandError(
                             f"Aircon returned HTTP {resp.status} for {command!r}: {body}"
                         )
-                    return cast(dict[str, Any], json.loads(body))
-            except (TimeoutError, ClientConnectionError) as ex:
+                    return self._parse_body(command, raw)
+            except (TimeoutError, ClientError) as ex:
+                # ClientError, not ClientConnectionError: a body that breaks
+                # off mid-transfer arrives as ClientPayloadError, which is a
+                # sibling of the connection errors rather than one of them.
+                # Both mean the same thing to a caller - no answer to act on.
                 raise WfRacConnectionError(f"Aircon returned error: {ex}") from ex
 
         data = {
@@ -322,64 +383,71 @@ class Repository:
                 _LOGGER.debug("Waiting for %rs until we can send a request", wait_for)
                 await asyncio.sleep(wait_for)
 
-            # If we already know how to communicate with the unit, proceed
-            if self._method in ("http", "https"):
-                try:
-                    json_response = await _execute_request(self._method)
-                except WfRacCommandError:
-                    # The unit answered, so the stored method is still the
-                    # right one - it just refused this particular command.
-                    # Discarding the method here would cost every later
-                    # request an extra discovery round trip for nothing.
-                    raise
-                except WfRacConnectionError:
-                    # A transport outage may mean either that the unit is down
-                    # or that its firmware now uses the other protocol. Clear
-                    # the active method so rediscovery remains possible, while
-                    # retaining it as the preferred first attempt below. This
-                    # lets an unchanged HTTPS unit recover without getting
-                    # stuck on an HTTP-first discovery attempt.
-                    self._preferred_method = self._method
-                    self._method = None
-                    raise
-
-            # If we haven't yet determined if https is required, find out
-            else:
-                _LOGGER.debug("No stored method; attempting discovery...")
-                methods: tuple[str, ...] = (
-                    (self._preferred_method,)
-                    if self._preferred_method in ("http", "https")
-                    else ()
-                )
-                methods += tuple(
-                    method for method in ("http", "https") if method not in methods
-                )
-
-                # Fall back on any API error, command errors included: a unit
-                # can answer the wrong protocol with a status code rather than
-                # dropping the connection, which still means "try the other
-                # one".
-                for index, method in enumerate(methods):
+            try:
+                # If we already know how to communicate with the unit, proceed
+                if self._method in ("http", "https"):
                     try:
-                        json_response = await _execute_request(method)
-                    except WfRacError:
-                        if index == len(methods) - 1:
-                            raise
-                        _LOGGER.debug(
-                            "%s failed, trying %s",
-                            method.upper(),
-                            methods[index + 1].upper(),
-                        )
-                        continue
+                        json_response = await _execute_request(self._method)
+                    except (WfRacCommandError, WfRacMalformedResponseError):
+                        # The unit answered, so the stored method is still the
+                        # right one - it just refused this particular command, or
+                        # garbled the answer to it. Discarding the method here
+                        # would cost every later request an extra discovery round
+                        # trip for nothing.
+                        raise
+                    except WfRacConnectionError:
+                        # A transport outage may mean either that the unit is down
+                        # or that its firmware now uses the other protocol. Clear
+                        # the active method so rediscovery remains possible, while
+                        # retaining it as the preferred first attempt below. This
+                        # lets an unchanged HTTPS unit recover without getting
+                        # stuck on an HTTP-first discovery attempt.
+                        self._preferred_method = self._method
+                        self._method = None
+                        raise
 
-                    _LOGGER.info(
-                        "Discovered working communication method: %s", method.upper()
+                # If we haven't yet determined if https is required, find out
+                else:
+                    _LOGGER.debug("No stored method; attempting discovery...")
+                    methods: tuple[str, ...] = (
+                        (self._preferred_method,)
+                        if self._preferred_method in ("http", "https")
+                        else ()
                     )
-                    self._method = method
-                    self._preferred_method = method
-                    break
+                    methods += tuple(
+                        method for method in ("http", "https") if method not in methods
+                    )
 
-            self._next_request_after = datetime.now() + MIN_TIME_BETWEEN_REQUESTS
+                    # Fall back on any API error, command errors included: a unit
+                    # can answer the wrong protocol with a status code rather than
+                    # dropping the connection, which still means "try the other
+                    # one".
+                    for index, method in enumerate(methods):
+                        try:
+                            json_response = await _execute_request(method)
+                        except WfRacError:
+                            if index == len(methods) - 1:
+                                raise
+                            _LOGGER.debug(
+                                "%s failed, trying %s",
+                                method.upper(),
+                                methods[index + 1].upper(),
+                            )
+                            continue
+
+                        _LOGGER.info(
+                            "Discovered working communication method: %s", method.upper()
+                        )
+                        self._method = method
+                        self._preferred_method = method
+                        break
+            finally:
+                # Set on every exit, a failed request included: what the
+                # module rations is connections, not answers, and firing the
+                # next request early because this one broke is how a single
+                # failure turns into a run of them (see the rate limiting
+                # section of the module reference).
+                self._next_request_after = datetime.now() + MIN_TIME_BETWEEN_REQUESTS
 
         _HTTP_LOG.debug(
             "Got response from %r: %r",

@@ -8,12 +8,13 @@ import ssl
 from unittest.mock import patch
 
 import pytest
-from aiohttp import ClientConnectionError
+from aiohttp import ClientConnectionError, ClientPayloadError
 
 from pywfrac.repository import (
     Repository,
     WfRacCommandError,
     WfRacConnectionError,
+    WfRacMalformedResponseError,
     WfRacRegistrationError,
     WfRacWriteRefusedError,
 )
@@ -22,12 +23,16 @@ _OK_BODY = json.dumps({"result": 0, "contents": {"airconId": "airco-id"}})
 
 
 class _FakeResponse:
-    def __init__(self, status: int, body: str) -> None:
+    """A body may be given as text or, where that is the point of the test, as
+    the raw bytes the module put on the wire.
+    """
+
+    def __init__(self, status: int, body: str | bytes) -> None:
         self.status = status
         self.content_type = "application/json"
-        self._body = body
+        self._body = body.encode() if isinstance(body, str) else body
 
-    async def text(self) -> str:
+    async def read(self) -> bytes:
         return self._body
 
     async def __aenter__(self) -> "_FakeResponse":
@@ -86,6 +91,97 @@ async def test_timeout_raises_connection_error(repository):
     with pytest.raises(WfRacConnectionError) as error:
         await repo.get_aircon_stats("airco-id")
     assert error.value.__cause__ is cause
+
+
+# The module garbles its own answers: a body that was valid ASCII for its first
+# hundred-odd bytes and then carried 0xd3 was reported from the field (#373),
+# and overrunning the request trailer makes one serialise binary outright.
+# Neither is a refusal, and neither must escape as a plain ValueError - that
+# skipped every caller's retry handling and took the unit straight offline.
+_GARBLED_BODY = (
+    b'{"result":0,"airconStat":"AACqj6r/AAAIAAAUigAAAAAAAf////9hp4\xd3EECAcqmg==",'
+    b'"numOfAccount":1}'
+)
+
+
+async def test_a_body_that_is_not_utf8_is_a_connection_failure(repository):
+    repo, _ = repository([_FakeResponse(200, _GARBLED_BODY)])
+
+    with pytest.raises(WfRacMalformedResponseError) as error:
+        await repo.get_aircon_stats("airco-id")
+
+    assert isinstance(error.value, WfRacConnectionError)
+    assert isinstance(error.value.__cause__, UnicodeDecodeError)
+
+
+async def test_a_body_that_is_not_json_is_a_connection_failure(repository):
+    repo, _ = repository([_FakeResponse(200, '{"result":0,"airconStat":"AACq')])
+
+    with pytest.raises(WfRacMalformedResponseError) as error:
+        await repo.get_aircon_stats("airco-id")
+
+    assert isinstance(error.value, WfRacConnectionError)
+    assert isinstance(error.value.__cause__, json.JSONDecodeError)
+
+
+async def test_a_garbled_body_is_reported_with_its_bytes(repository):
+    """The bytes are the whole diagnosis, and this is the only place they
+    survive: the debug log is off in every installation that has not gone
+    looking for a fault yet.
+    """
+    repo, _ = repository([_FakeResponse(200, _GARBLED_BODY)])
+
+    with pytest.raises(WfRacMalformedResponseError) as error:
+        await repo.get_aircon_stats("airco-id")
+
+    assert "\\xd3" in str(error.value)
+    assert "numOfAccount" in str(error.value)
+
+
+async def test_a_garbled_body_keeps_the_discovered_method(repository):
+    """The unit answered over this protocol, so there is nothing to rediscover
+    - unlike a transport outage, which may mean the firmware changed branch.
+    """
+    repo, session = repository(
+        [_FakeResponse(200, _GARBLED_BODY), _FakeResponse(200, _OK_BODY)]
+    )
+
+    with pytest.raises(WfRacMalformedResponseError):
+        await repo.get_aircon_stats("airco-id")
+    assert repo.method == "http"
+
+    await repo.get_aircon_stats("airco-id")
+    assert session.urls == [
+        "http://127.0.0.1:51443/beaver/command/getAirconStat",
+        "http://127.0.0.1:51443/beaver/command/getAirconStat",
+    ]
+
+
+async def test_a_truncated_transfer_is_a_connection_failure(repository):
+    """ClientPayloadError is a sibling of the connection errors, not one of
+    them, so it needs catching in its own right.
+    """
+    cause = ClientPayloadError("response payload is not completed")
+    repo, _ = repository([cause])
+
+    with pytest.raises(WfRacConnectionError) as error:
+        await repo.get_aircon_stats("airco-id")
+
+    assert error.value.__cause__ is cause
+
+
+async def test_a_failed_request_still_arms_the_throttle(repository):
+    """What the module rations is connections, not answers. Firing the next
+    request early because this one broke is how one failure becomes a run of
+    them.
+    """
+    repo, _ = repository([_FakeResponse(501, "Not supported this command")])
+    before = repo._next_request_after
+
+    with pytest.raises(WfRacCommandError):
+        await repo.get_aircon_stats("airco-id")
+
+    assert repo._next_request_after > before
 
 
 async def test_refused_command_keeps_the_discovered_method(repository):
