@@ -57,7 +57,7 @@ layout.
 
 The `airconStat` wire format, error codes, and per-model capability tables
 are documented in the integration's
-[module reference](https://github.com/blues-sechseck/Mitsubishi-WF-RAC-Integration/blob/main/ha-integration/docs/wf-rac-module-reference.md).
+[module reference](https://github.com/blues-sechseck/Mitsubishi-WF-RAC-Integration/blob/main/docs/wf-rac-module-reference.md).
 
 ## Versioning
 
