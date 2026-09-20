@@ -198,13 +198,22 @@ def _empty_stat_bytes() -> bytearray:
     return bytearray([0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 
 
-# Byte 5 carries the room temperature as round(T * 4) + 61, with 0xFF reserved
-# for "use the internal sensor" - so 0x00..0xFE is the whole encodable span.
-# Anything outside it makes encode_external_temperature() raise, which would
-# take down the write path on every single frame, so the range is enforced
-# wherever a value enters the integration (service schema, restored state).
-EXTERNAL_TEMPERATURE_MIN: Final = -15.25
-EXTERNAL_TEMPERATURE_MAX: Final = 48.25
+# Byte 5 carries the room temperature on the same scale the unit reports its
+# own reading in: indoorTempList, the manufacturer's thermistor table, which
+# the official app uses to display the pushed indoor-temperature segment and
+# which the unit echoes byte 5 back through. Over the living range (16-31 °C)
+# that table is (raw - 59) / 4 in 0.25 K steps; the widely copied
+# (raw - 61) / 4 from the SPI-bus projects lands every value half a kelvin
+# too warm at the unit (issue #218). 0xFF is reserved for "use the internal
+# sensor", and the table is flat below index 16, so 0x10..0xFE is the
+# encodable span. Anything outside it makes encode_external_temperature()
+# raise, which would take down the write path on every single frame, so the
+# range is enforced wherever a value enters the integration (service schema,
+# restored state).
+_EXTERNAL_TEMPERATURE_RAW_MIN: Final = 0x10
+_EXTERNAL_TEMPERATURE_RAW_MAX: Final = 0xFE
+EXTERNAL_TEMPERATURE_MIN: Final = indoorTempList[_EXTERNAL_TEMPERATURE_RAW_MIN]
+EXTERNAL_TEMPERATURE_MAX: Final = indoorTempList[_EXTERNAL_TEMPERATURE_RAW_MAX]
 
 
 def is_external_temperature_mode(operation: bool, operation_mode: int) -> bool:
@@ -266,15 +275,24 @@ class RacParser:
 
         0xFF means "use the internal room sensor"; the override value is stored
         in the same byte slot as the command's sensor selection field.
+
+        The byte is looked up in indoorTempList rather than computed, so what
+        goes out is exactly the byte the unit and the official app would
+        render as this temperature - the same table decodes the reading the
+        unit pushes back. Ties between two neighbouring entries go to the
+        lower byte.
         """
         if temperature is None:
             return None
-        raw_temperature = round(temperature * 4) + 61
-        if raw_temperature < 0 or raw_temperature >= 0xFF:
+        if not EXTERNAL_TEMPERATURE_MIN <= temperature <= EXTERNAL_TEMPERATURE_MAX:
             raise ValueError(
-                "ExternalTemperature must encode to a byte in range 0x00..0xFE"
+                "ExternalTemperature must lie within "
+                f"{EXTERNAL_TEMPERATURE_MIN}..{EXTERNAL_TEMPERATURE_MAX} °C"
             )
-        return raw_temperature
+        return min(
+            range(_EXTERNAL_TEMPERATURE_RAW_MIN, _EXTERNAL_TEMPERATURE_RAW_MAX + 1),
+            key=lambda raw: abs(indoorTempList[raw] - temperature),
+        )
 
     @staticmethod
     def _should_encode_external_temperature(aircon_stat: AirconStat) -> bool:

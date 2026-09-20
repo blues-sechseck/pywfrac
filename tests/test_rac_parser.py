@@ -23,8 +23,13 @@ from pywfrac.models.aircon import (
     AirconStat,
     HomeLeaveModeSetting,
 )
-from pywfrac.parser import RCV_AIRFLOW_MASKS, RacParser
-from pywfrac.utils import find_match
+from pywfrac.parser import (
+    EXTERNAL_TEMPERATURE_MAX,
+    EXTERNAL_TEMPERATURE_MIN,
+    RCV_AIRFLOW_MASKS,
+    RacParser,
+)
+from pywfrac.utils import find_match, indoorTempList
 
 from .live_captures import LIVE_CAPTURES
 
@@ -797,7 +802,7 @@ def test_status_request_to_byte_preserves_external_temperature_override(parser):
         ServiceDataStatusRequest=True,
     )
     stat_byte = parser.status_request_to_byte(stat)
-    assert stat_byte[5] == round(23.5 * 4) + 61
+    assert stat_byte[5] == 0x99
 
 
 def test_status_request_to_byte_leaves_the_override_out_when_off(parser):
@@ -816,10 +821,45 @@ def test_status_request_to_byte_leaves_the_override_out_when_off(parser):
 
 
 def test_command_to_byte_external_temperature_encodes_correctly(parser):
+    # 0x99 is the byte both units under test report while their own sensor
+    # reads 23.5 °C, and the byte the official app renders as 23.5 (#218).
     stat_byte = parser.command_to_byte(
         _base_stat(Operation=True, OperationMode=1, ExternalTemperature=23.5)
     )
-    assert stat_byte[5] == round(23.5 * 4) + 61
+    assert stat_byte[5] == 0x99
+
+
+@pytest.mark.parametrize("temperature", [x / 4 for x in range(16 * 4, 31 * 4 + 1)])
+def test_external_temperature_is_linear_over_the_living_range(temperature):
+    # The manufacturer's table is (raw - 59) / 4 between 16 and 31 °C; the
+    # SPI-bus projects' (raw - 61) / 4 would land every value 0.5 K warm.
+    assert RacParser.encode_external_temperature(temperature) == round(
+        temperature * 4
+    ) + 59
+
+
+@pytest.mark.parametrize(
+    "temperature", [EXTERNAL_TEMPERATURE_MIN, -3.1, 0.0, 9.65, 40.3, EXTERNAL_TEMPERATURE_MAX]
+)
+def test_external_temperature_round_trips_through_the_table(temperature):
+    # Outside the linear range the table is a thermistor curve; whatever byte
+    # goes out must decode back to the nearest entry, i.e. what the unit will
+    # report and the app will show once the value is in use.
+    raw = RacParser.encode_external_temperature(temperature)
+    assert 0x10 <= raw <= 0xFE
+    assert abs(indoorTempList[raw] - temperature) <= 0.16
+    assert all(
+        abs(indoorTempList[other] - temperature) >= abs(indoorTempList[raw] - temperature)
+        for other in range(0x10, 0xFF)
+    )
+
+
+@pytest.mark.parametrize(
+    "temperature", [EXTERNAL_TEMPERATURE_MIN - 0.01, EXTERNAL_TEMPERATURE_MAX + 0.01]
+)
+def test_external_temperature_outside_the_table_raises(temperature):
+    with pytest.raises(ValueError):
+        RacParser.encode_external_temperature(temperature)
 
 
 def test_command_to_byte_external_temperature_skipped_when_off(parser):
