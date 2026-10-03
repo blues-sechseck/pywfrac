@@ -65,6 +65,18 @@ SERVICE_DATA_DISCHARGE_SUPERHEAT_RAW: Final = 0xB1
 # operation-data address space, and asking costs one segment in a request that
 # goes out anyway. A unit that ignores it simply leaves the sensor unknown.
 SERVICE_DATA_PROTECTION_RAW: Final = 0x7C
+# Silent operation, an outdoor-unit function: the state is bit 0x20 of op2,
+# valid only when op1 carries the selector 0x80 - the one code in this space
+# that answers with a selector of its own. Same layout as the CNS bus read
+# C0/DD in mhi-ac-ctrl-esp32.
+SERVICE_DATA_SILENT_OPERATION: Final = 0xDD
+SILENT_OPERATION_SELECTOR: Final = 0x80
+SILENT_OPERATION_BIT: Final = 0x20
+# The write is a different code: segment (0x21, 1|0, 0xFF, 0xFF). The module
+# answers it with result 11 or a body that is not JSON at all, because the
+# bridge treats 0x21 like an unknown read and gets no reply segment - yet the
+# indoor unit applies it. Whether it took effect shows only in a read of 0xDD.
+SILENT_OPERATION_WRITE_CODE: Final = 0x21
 SERVICE_DATA_CODES: Final = (
     SERVICE_DATA_COMPRESSOR_FREQ,
     SERVICE_DATA_OPERATING_CURRENT,
@@ -75,6 +87,7 @@ SERVICE_DATA_CODES: Final = (
     SERVICE_DATA_INDOOR_COIL_OUTLET_RAW,
     SERVICE_DATA_DISCHARGE_SUPERHEAT_RAW,
     SERVICE_DATA_PROTECTION_RAW,
+    SERVICE_DATA_SILENT_OPERATION,
 )
 SERVICE_DATA_CODE_BY_FIELD: Final = {
     "CompressorFrequency": SERVICE_DATA_COMPRESSOR_FREQ,
@@ -92,6 +105,7 @@ SERVICE_DATA_CODE_BY_FIELD: Final = {
     "OutdoorCoilRaw": SERVICE_DATA_OUTDOOR_COIL_RAW,
     "DischargeSuperheatRaw": SERVICE_DATA_DISCHARGE_SUPERHEAT_RAW,
     "ProtectionRaw": SERVICE_DATA_PROTECTION_RAW,
+    "SilentOperation": SERVICE_DATA_SILENT_OPERATION,
 }
 
 # The coil thermistor is the same part as the two air sensors - MHI's manuals
@@ -228,6 +242,11 @@ def is_external_temperature_mode(operation: bool, operation_mode: int) -> bool:
     return operation_mode in (0, 1, 2, 4)
 
 
+def _segment_bytes(vals: list[int], i: int) -> tuple[int, int, int]:
+    """op1..op3 of the trailer segment starting at vals[i], as unsigned bytes."""
+    return (vals[i + 1] & 0xFF, vals[i + 2] & 0xFF, vals[i + 3] & 0xFF)
+
+
 def _log_status_request(
     stat_byte: bytearray, carries_state: bool, operation: bool
 ) -> None:
@@ -355,13 +374,16 @@ class RacParser:
     def _is_status_request(aircon_stat: AirconStat) -> bool:
         """Whether this frame exists only to ask the unit something.
 
-        Both of these are answered in the trailer of the response and change
-        nothing on the unit; the HomeLeaveMode *set* path below is a real
-        write and is not one of them.
+        The two requests are answered in the trailer of the response and
+        change nothing on the unit. The silent operation write does change
+        something, but only through its trailer segment - the command block
+        around it must not, so it travels in the same set-bit-free frame. The
+        HomeLeaveMode *set* path below is a real write and is not one of them.
         """
         return bool(
             aircon_stat.ServiceDataStatusRequest
             or aircon_stat.HomeLeaveModeStatusRequest
+            or aircon_stat.SilentOperationSet is not None
         )
 
     @staticmethod
@@ -412,6 +434,22 @@ class RacParser:
                 for sub, value in zip(HOME_LEAVE_MODE_SUBCODES, values)
             ]
             return cls._build_trailer(segments)
+
+        if aircon_stat.SilentOperationSet is not None:
+            # A write to the climate MCU, and the only one this library sends
+            # through the trailer. Alone in its frame: the module refuses it
+            # (see SILENT_OPERATION_WRITE_CODE), and a refusal takes every
+            # other segment of the same request with it.
+            return cls._build_trailer(
+                [
+                    (
+                        SILENT_OPERATION_WRITE_CODE,
+                        1 if aircon_stat.SilentOperationSet else 0,
+                        255,
+                        255,
+                    )
+                ]
+            )
 
         if aircon_stat.ServiceDataStatusRequest:
             # OP1=255 means "report the current value" - never 0, which in
@@ -707,10 +745,12 @@ class RacParser:
             ):
                 home_leave_mode_raw[vals[i + 2] & 0xFF] = vals[i + 3] & 0xFF
             elif (vals[i] & 0xFF) in SERVICE_DATA_CODES:
+                ac_device.ServiceDataRaw[vals[i] & 0xFF] = _segment_bytes(vals, i)
                 self._apply_service_data_segment(
                     ac_device, vals[i] & 0xFF, vals[i + 1] & 0xFF, vals[i + 2] & 0xFF
                 )
             else:
+                ac_device.ServiceDataRaw[vals[i] & 0xFF] = _segment_bytes(vals, i)
                 self._log_unknown_segment(vals, i)
         self._apply_home_leave_mode(ac_device, home_leave_mode_raw)
 
@@ -764,6 +804,8 @@ class RacParser:
             ac_device.DischargeSuperheatRaw = op2
         elif code == SERVICE_DATA_PROTECTION_RAW:
             ac_device.ProtectionRaw = op2
+        elif code == SERVICE_DATA_SILENT_OPERATION and op1 == SILENT_OPERATION_SELECTOR:
+            ac_device.SilentOperation = bool(op2 & SILENT_OPERATION_BIT)
 
     @staticmethod
     def _hot_gas_temp(op2: int) -> float | None:

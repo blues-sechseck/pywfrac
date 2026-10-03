@@ -19,6 +19,7 @@ from .parser import (
     SERVICE_DATA_CODE_BY_FIELD,
     SERVICE_DATA_CODES,
     SERVICE_DATA_INDOOR_COIL_RAW,
+    SERVICE_DATA_SILENT_OPERATION,
     RacParser,
 )
 from .repository import (
@@ -58,6 +59,7 @@ __all__ = [
     "SERVICE_DATA_CODES",
     "SERVICE_DATA_CODE_BY_FIELD",
     "SERVICE_DATA_INDOOR_COIL_RAW",
+    "SERVICE_DATA_SILENT_OPERATION",
     "MIN_TIME_BETWEEN_REQUESTS",
     "REQUEST_TIMEOUT",
     "Aircon",

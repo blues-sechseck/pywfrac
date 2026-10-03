@@ -39,6 +39,10 @@ class AirconCommands(StrEnum):
     # action - see Device._maybe_request_service_data().
     ServiceDataStatusRequest = "ServiceDataStatusRequest"
 
+    # Silent operation write (trailer segment 0x21) - see the parser's
+    # SILENT_OPERATION_WRITE_CODE for why the module's answer cannot confirm it.
+    SilentOperationSet = "SilentOperationSet"
+
 
 @dataclass
 class HomeLeaveModeSetting:
@@ -123,6 +127,12 @@ class Aircon(AirconBase):
     OutdoorCoilRaw: int | None = None  # THO-R1, shared by one outdoor unit
     DischargeSuperheatRaw: int | None = None  # TDSH
     ProtectionRaw: int | None = None  # protection number, answer untested
+    # Silent operation (0xDD); None until a read was answered with its selector.
+    SilentOperation: bool | None = None
+    # Every operation-data segment of this frame as (op1, op2, op3), keyed by
+    # code - decoded or not. The undecoded ones are what a reader without a
+    # formula still gets to look at.
+    ServiceDataRaw: dict[int, tuple[int, int, int]] = field(default_factory=dict)
 
 
 @dataclass
@@ -145,6 +155,8 @@ class AirconStat(AirconBase):
     ExternalTemperature: float | None = None
     # See AirconCommands - only ever set via Device._maybe_request_service_data().
     ServiceDataStatusRequest: tuple[int, ...] = ()
+    # See AirconCommands.SilentOperationSet; None sends nothing.
+    SilentOperationSet: bool | None = None
 
     @classmethod
     def from_aircon(cls, aircon: Aircon) -> "AirconStat":
