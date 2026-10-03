@@ -362,6 +362,55 @@ def test_parse_temperatures_service_data_segments(parser):
     assert ac.ProtectionRaw == 0x03
 
 
+def test_silent_operation_trailer_is_the_write_segment_alone(parser):
+    for state, op1 in ((True, 1), (False, 0)):
+        trailer = parser._variable_trailer(_base_stat(SilentOperationSet=state))
+        assert list(trailer) == [1, 0x21, op1, 255, 255]
+
+
+def test_silent_operation_write_travels_in_a_set_bit_free_block(parser):
+    # The segment is the only thing that may change on the unit; the block
+    # around it must be the read-only one, not a command echoing the state.
+    stat = _base_stat(SilentOperationSet=True)
+    assert parser._is_status_request(stat)
+    assert parser.status_request_to_byte(stat) != parser.command_to_byte(stat)
+
+
+def test_silent_operation_unset_sends_nothing(parser):
+    stat = _base_stat()
+    assert stat.SilentOperationSet is None
+    assert not parser._is_status_request(stat)
+
+
+@pytest.mark.parametrize(
+    ("op1", "op2", "expected"),
+    [
+        # Read back from both indoor units after a write (27.09. and 03.10.2026).
+        (0x80, 0x20, True),
+        (0x80, 0x00, False),
+        # Without the selector the flags byte means nothing.
+        (0x10, 0x20, None),
+    ],
+)
+def test_parse_temperatures_silent_operation(parser, op1, op2, expected):
+    ac = Aircon()
+    parser._parse_temperatures(ac, [0xDD - 256, op1 - 256 if op1 > 127 else op1, op2, 0])
+    assert ac.SilentOperation is expected
+
+
+def test_parse_temperatures_keeps_every_operation_data_segment_raw(parser):
+    # One decoded code, one nobody has a formula for: both reach ServiceDataRaw.
+    ac = Aircon()
+    parser._parse_temperatures(ac, [0x11, 0x10, 0x14, 0, 0xAD - 256, 0x10, 0x1E, -1])
+    assert ac.ServiceDataRaw == {0x11: (0x10, 0x14, 0x00), 0xAD: (0x10, 0x1E, 0xFF)}
+
+
+def test_parse_temperatures_fixed_tags_are_not_operation_data(parser):
+    ac = Aircon()
+    parser._parse_temperatures(ac, [-128, 16, 100, -1, -108, 16, 4, 0])
+    assert ac.ServiceDataRaw == {}
+
+
 def test_parse_temperatures_service_data_absent_by_default(parser):
     # A plain poll without a prior ServiceDataStatusRequest must leave every
     # field at its None default (see AirconCommands), not e.g. 0.
@@ -382,6 +431,8 @@ def test_parse_temperatures_service_data_absent_by_default(parser):
     assert ac.OutdoorCoilRaw is None
     assert ac.DischargeSuperheatRaw is None
     assert ac.ProtectionRaw is None
+    assert ac.SilentOperation is None
+    assert ac.ServiceDataRaw == {}
 
 
 def test_coil_temp_converts_the_heating_range(parser):
