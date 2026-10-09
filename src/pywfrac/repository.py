@@ -167,6 +167,15 @@ class WfRacRegistrationError(WfRacCommandError):
     """
 
 
+class WfRacAccountTableFullError(WfRacCommandError):
+    """Raised when registering answers result 2.
+
+    On updateAccountInfo result 2 means the module's four account slots are
+    taken. Nothing frees one except the manufacturer's app, so retrying is
+    pointless.
+    """
+
+
 class WfRacWriteRefusedError(WfRacCommandError):
     """Raised when setAirconStat answers result 1, 11 or 12.
 
@@ -221,6 +230,7 @@ class Repository:
         device_id: str,
         method: str | None = None,
         cert_path: str | None = None,
+        time_zone: str | None = None,
     ) -> None:
         self._hostname = hostname
         self._port = port
@@ -252,6 +262,8 @@ class Repository:
         # requests both see the wait as satisfied and fire back-to-back).
         self._request_lock = asyncio.Lock()
         self._parser = RacParser()
+        # Needed to register again on its own (see async_send_command).
+        self._time_zone = time_zone
 
     @property
     def method(self) -> str | None:
@@ -554,6 +566,51 @@ class Repository:
         """delete the account info on the airco"""
         contents = {"accountId": self._operator_id, "airconId": airco_id}
         return await self._post("deleteAccountInfo", contents)
+
+    async def async_register(self, airco_id: str, time_zone: str) -> None:
+        """Register this operator id with the unit.
+
+        Raises WfRacAccountTableFullError for result 2 and WfRacCommandError
+        for any other refusal the library knows. A code it does not know is
+        logged and let through, since refusing it would leave a unit that
+        answers it unusable. An answer without a readable result is
+        WfRacMalformedResponseError, and transport failures propagate.
+        """
+        self._time_zone = time_zone
+        result = await self.update_account_info(airco_id, time_zone)
+        code = _result_code(result)
+        if code is None:
+            raise WfRacMalformedResponseError(
+                "Aircon answered the registration without a readable result code"
+            )
+        if code == 2:
+            raise WfRacAccountTableFullError(
+                f"Aircon refused the registration: {RESULT_CODES[2]}"
+            )
+        if code in RESULT_CODES and code != 0:
+            raise WfRacCommandError(
+                f"Aircon refused the registration with result {code} ({RESULT_CODES[code]})"
+            )
+        if code != 0:
+            # The firmware we can read maps its handler's return value onto
+            # 0/1/2/11/12 only, so this is a branch nobody has reported; the
+            # log line is the evidence.
+            _LOGGER.warning(
+                "Airco [%s] answered the registration with result %s, which is not "
+                "a code this library knows. Continuing. Please report this together "
+                "with the module's firmware version",
+                airco_id,
+                code,
+            )
+
+    async def async_unregister(self, airco_id: str) -> bool:
+        """Release this operator id's account slot; True only on result 0.
+
+        Refusals, the rate limit and unreadable answers all leave the slot
+        where it was and return False. Transport failures propagate.
+        """
+        result = await self.del_account_info(airco_id)
+        return _result_code(result) == 0
 
     async def get_aircon_stats(
         self, airco_id: str | None = None, raw: bool = False

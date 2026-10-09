@@ -29,6 +29,7 @@ from .repository import (
     REQUEST_TIMEOUT,
     RESULT_CODES,
     Repository,
+    WfRacAccountTableFullError,
     WfRacCommandError,
     WfRacConnectionError,
     WfRacError,
@@ -41,6 +42,7 @@ from .repository import (
 __all__ = [
     "Repository",
     "WfRacError",
+    "WfRacAccountTableFullError",
     "WfRacCommandError",
     "WfRacRegistrationError",
     "WfRacWriteRefusedError",

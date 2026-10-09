@@ -12,9 +12,12 @@ from aiohttp import ClientConnectionError, ClientPayloadError
 
 from pywfrac.models.status import AirconStatus, FirmwareInfo
 from pywfrac.repository import (
+    RESULT_CODES,
     Repository,
+    WfRacAccountTableFullError,
     WfRacCommandError,
     WfRacConnectionError,
+    WfRacError,
     WfRacMalformedResponseError,
     WfRacRegistrationError,
     WfRacWriteRefusedError,
@@ -640,3 +643,85 @@ async def test_get_status_malformed_answers_are_typed(repository, body):
 
     with pytest.raises(WfRacMalformedResponseError):
         await repo.async_get_status("airco-id")
+
+
+def _result(code):
+    return _FakeResponse(200, json.dumps({"result": code}))
+
+
+async def test_register_accepts_result_0(repository):
+    repo, _ = repository([_result(0)])
+
+    assert await repo.async_register("airco-id", "Europe/Berlin") is None
+
+
+async def test_register_result_2_is_a_full_account_table(repository):
+    repo, _ = repository([_result(2)])
+
+    with pytest.raises(WfRacAccountTableFullError) as error:
+        await repo.async_register("airco-id", "Europe/Berlin")
+
+    assert isinstance(error.value, WfRacCommandError)
+
+
+@pytest.mark.parametrize("code", [1, 10, 11, 12, 20, 99, 429])
+async def test_register_names_every_other_known_refusal(repository, code):
+    repo, _ = repository([_result(code)])
+
+    with pytest.raises(WfRacCommandError, match=f"result {code}") as error:
+        await repo.async_register("airco-id", "Europe/Berlin")
+
+    assert not isinstance(error.value, WfRacAccountTableFullError)
+    assert RESULT_CODES[code] in str(error.value)
+
+
+async def test_register_lets_an_unknown_code_through_with_a_warning(repository, caplog):
+    caplog.set_level("WARNING", logger="pywfrac.repository")
+    repo, _ = repository([_result(77)])
+
+    await repo.async_register("airco-id", "Europe/Berlin")
+
+    assert [r.levelname for r in caplog.records] == ["WARNING"]
+    assert "result 77" in caplog.records[0].message
+
+
+@pytest.mark.parametrize(
+    "body", ["{}", '{"result": null}', '{"result": "x"}', "[]", '{"result": []}']
+)
+async def test_register_without_a_readable_result_is_malformed(repository, body):
+    repo, _ = repository([_FakeResponse(200, body)])
+
+    with pytest.raises(WfRacMalformedResponseError):
+        await repo.async_register("airco-id", "Europe/Berlin")
+
+
+async def test_register_propagates_transport_errors(repository):
+    repo, _ = repository([ClientConnectionError("boom")])
+
+    with pytest.raises(WfRacConnectionError):
+        await repo.async_register("airco-id", "Europe/Berlin")
+
+
+async def test_unregister_is_true_only_on_result_0(repository):
+    repo, _ = repository([_result(0)])
+    assert await repo.async_unregister("airco-id") is True
+
+
+@pytest.mark.parametrize("body", [_result(2), _result(12), _result(77), "{}"])
+async def test_unregister_is_false_on_any_other_answer(repository, body):
+    if isinstance(body, str):
+        body = _FakeResponse(200, body)
+    repo, _ = repository([body])
+
+    assert await repo.async_unregister("airco-id") is False
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [ClientConnectionError("boom"), _FakeResponse(400, "bad"), _FakeResponse(200, "[]")],
+)
+async def test_unregister_propagates_errors(repository, outcome):
+    repo, _ = repository([outcome])
+
+    with pytest.raises(WfRacError):
+        await repo.async_unregister("airco-id")
