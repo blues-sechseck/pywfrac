@@ -91,7 +91,7 @@ async def test_http_error_status_raises_command_error(repository):
 
 async def test_connection_failure_raises_connection_error(repository):
     cause = ClientConnectionError("connection refused")
-    repo, _ = repository([cause])
+    repo, _ = repository([cause, cause])
     with pytest.raises(WfRacConnectionError) as error:
         await repo.get_aircon_stats("airco-id")
     assert error.value.__cause__ is cause
@@ -99,7 +99,7 @@ async def test_connection_failure_raises_connection_error(repository):
 
 async def test_timeout_raises_connection_error(repository):
     cause = TimeoutError()
-    repo, _ = repository([cause])
+    repo, _ = repository([cause, cause])
     with pytest.raises(WfRacConnectionError) as error:
         await repo.get_aircon_stats("airco-id")
     assert error.value.__cause__ is cause
@@ -174,7 +174,7 @@ async def test_a_truncated_transfer_is_a_connection_failure(repository):
     them, so it needs catching in its own right.
     """
     cause = ClientPayloadError("response payload is not completed")
-    repo, _ = repository([cause])
+    repo, _ = repository([cause, cause])
 
     with pytest.raises(WfRacConnectionError) as error:
         await repo.get_aircon_stats("airco-id")
@@ -215,10 +215,14 @@ async def test_refused_command_keeps_the_discovered_method(repository):
     ]
 
 
-async def test_rediscovery_tries_the_last_working_method_first(repository):
+async def test_a_failed_unit_is_retried_on_the_last_working_method_first(repository):
     """Recovery must not put an HTTPS unit behind an HTTP-first timeout."""
     repo, session = repository(
-        [ClientConnectionError("boom"), _FakeResponse(200, _OK_BODY)],
+        [
+            ClientConnectionError("boom"),
+            ClientConnectionError("boom"),
+            _FakeResponse(200, _OK_BODY),
+        ],
         method="https",
     )
     repo._ssl_context = ssl.create_default_context()
@@ -231,38 +235,73 @@ async def test_rediscovery_tries_the_last_working_method_first(repository):
     assert repo.method == "https"
     assert session.urls == [
         "https://127.0.0.1:51443/beaver/command/getAirconStat",
+        "http://127.0.0.1:51443/beaver/command/getAirconStat",
         "https://127.0.0.1:51443/beaver/command/getAirconStat",
     ]
+
+
+async def test_a_stored_method_that_works_costs_one_request(repository):
+    repo, session = repository([_FakeResponse(200, _OK_BODY)] * 2, method="http")
+
+    await repo.get_aircon_stats("airco-id")
+    await repo.get_aircon_stats("airco-id")
+
+    assert len(session.urls) == 2
+    assert repo.method == "http"
+
+
+async def test_a_stored_method_is_not_logged_as_discovered(repository, caplog):
+    caplog.set_level("INFO", logger="pywfrac.repository")
+    repo, _ = repository([_FakeResponse(200, _OK_BODY)], method="http")
+
+    await repo.get_aircon_stats("airco-id")
+
+    assert not [r for r in caplog.records if "Discovered" in r.message]
+
+
+async def test_both_methods_failing_raises_the_stored_methods_error(repository):
+    first = ClientConnectionError("stored method unreachable")
+    repo, _ = repository([first, ClientConnectionError("other")], method="http")
+
+    with pytest.raises(WfRacConnectionError) as error:
+        await repo.get_aircon_stats("airco-id")
+
+    assert error.value.__cause__ is first
 
 
 @pytest.mark.parametrize(
     ("old_method", "new_method"), (("http", "https"), ("https", "http"))
 )
-async def test_rediscovery_recovers_after_a_protocol_change(
+async def test_a_stored_method_falls_back_within_the_same_call(
     repository, old_method, new_method
 ):
-    """The alternative remains reachable if a firmware line changes protocol."""
+    """A firmware line that changes protocol must not cost a failed request."""
     repo, session = repository(
-        [
-            ClientConnectionError("unit offline"),
-            ClientConnectionError("old protocol refused"),
-            _FakeResponse(200, _OK_BODY),
-        ],
+        [ClientConnectionError("old protocol refused"), _FakeResponse(200, _OK_BODY)],
         method=old_method,
     )
     repo._ssl_context = ssl.create_default_context()
-
-    with pytest.raises(WfRacConnectionError):
-        await repo.get_aircon_stats("airco-id")
 
     await repo.get_aircon_stats("airco-id")
 
     assert repo.method == new_method
     assert session.urls == [
         f"{old_method}://127.0.0.1:51443/beaver/command/getAirconStat",
-        f"{old_method}://127.0.0.1:51443/beaver/command/getAirconStat",
         f"{new_method}://127.0.0.1:51443/beaver/command/getAirconStat",
     ]
+
+
+@pytest.mark.parametrize(
+    "outcome", [_FakeResponse(501, "no"), _FakeResponse(200, _GARBLED_BODY)]
+)
+async def test_a_stored_method_that_answered_is_not_second_guessed(repository, outcome):
+    repo, session = repository([outcome], method="http")
+
+    with pytest.raises(WfRacError):
+        await repo.get_aircon_stats("airco-id")
+
+    assert len(session.urls) == 1
+    assert repo.method == "http"
 
 
 async def test_discovery_falls_back_to_https_on_a_command_error(repository):
@@ -623,7 +662,7 @@ async def test_get_status_http_error_is_a_command_error(repository):
 
 
 async def test_get_status_transport_failure_is_a_connection_error(repository):
-    repo, _ = repository([ClientConnectionError("boom")])
+    repo, _ = repository([ClientConnectionError("boom")] * 2)
 
     with pytest.raises(WfRacConnectionError):
         await repo.async_get_status("airco-id")
@@ -701,7 +740,7 @@ async def test_register_without_a_readable_result_is_malformed(repository, body)
 
 
 async def test_register_propagates_transport_errors(repository):
-    repo, _ = repository([ClientConnectionError("boom")])
+    repo, _ = repository([ClientConnectionError("boom")] * 2)
 
     with pytest.raises(WfRacConnectionError):
         await repo.async_register("airco-id", "Europe/Berlin")
@@ -726,7 +765,7 @@ async def test_unregister_is_false_on_any_other_answer(repository, body):
     [ClientConnectionError("boom"), _FakeResponse(400, "bad"), _FakeResponse(200, "[]")],
 )
 async def test_unregister_propagates_errors(repository, outcome):
-    repo, _ = repository([outcome])
+    repo, _ = repository([outcome, outcome])
 
     with pytest.raises(WfRacError):
         await repo.async_unregister("airco-id")
@@ -990,7 +1029,7 @@ async def test_time_zone_constructor_argument_enables_re_registration(sleeps):
 
 
 async def test_send_command_propagates_transport_errors(repository, sleeps):
-    repo, _ = repository([ClientConnectionError("boom")])
+    repo, _ = repository([ClientConnectionError("boom")] * 2)
 
     with pytest.raises(WfRacConnectionError):
         await repo.async_send_command("airco-id", RacParser().translate_bytes(_STAT), {})

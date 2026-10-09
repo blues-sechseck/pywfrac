@@ -427,63 +427,56 @@ class Repository:
                 await asyncio.sleep(wait_for)
 
             try:
-                # If we already know how to communicate with the unit, proceed
-                if self._method in ("http", "https"):
-                    try:
-                        json_response = await _execute_request(self._method)
-                    except (WfRacCommandError, WfRacMalformedResponseError):
-                        # The unit answered, so the stored method is still the
-                        # right one - it just refused this particular command, or
-                        # garbled the answer to it. Discarding the method here
-                        # would cost every later request an extra discovery round
-                        # trip for nothing.
-                        raise
-                    except WfRacConnectionError:
-                        # A transport outage may mean either that the unit is down
-                        # or that its firmware now uses the other protocol. Clear
-                        # the active method so rediscovery remains possible, while
-                        # retaining it as the preferred first attempt below. This
-                        # lets an unchanged HTTPS unit recover without getting
-                        # stuck on an HTTP-first discovery attempt.
-                        self._preferred_method = self._method
-                        self._method = None
-                        raise
-
-                # If we haven't yet determined if https is required, find out
-                else:
+                stored = self._method is not None
+                first = self._method or self._preferred_method
+                methods: tuple[str, ...] = (first,) if first else ()
+                methods += tuple(
+                    method for method in ("http", "https") if method not in methods
+                )
+                if not stored:
                     _LOGGER.debug("No stored method; attempting discovery...")
-                    methods: tuple[str, ...] = (
-                        (self._preferred_method,)
-                        if self._preferred_method in ("http", "https")
-                        else ()
-                    )
-                    methods += tuple(
-                        method for method in ("http", "https") if method not in methods
-                    )
 
-                    # Fall back on any API error, command errors included: a unit
-                    # can answer the wrong protocol with a status code rather than
-                    # dropping the connection, which still means "try the other
-                    # one".
-                    for index, method in enumerate(methods):
-                        try:
-                            json_response = await _execute_request(method)
-                        except WfRacError:
-                            if index == len(methods) - 1:
-                                raise
-                            _LOGGER.debug(
-                                "%s failed, trying %s",
-                                method.upper(),
-                                methods[index + 1].upper(),
-                            )
-                            continue
+                # Any API error moves on to the other protocol, command errors
+                # included: a unit can answer the wrong protocol with a status
+                # code rather than dropping the connection. The exception is a
+                # stored method that got an answer - it proved itself, so a
+                # refusal or a garbled body is the unit's problem, and trying
+                # the other protocol would only cost an extra round trip.
+                first_error: WfRacError | None = None
+                for index, method in enumerate(methods):
+                    try:
+                        json_response = await _execute_request(method)
+                    except WfRacError as ex:
+                        answered = isinstance(
+                            ex, (WfRacCommandError, WfRacMalformedResponseError)
+                        )
+                        if stored and index == 0 and answered:
+                            raise
+                        first_error = first_error or ex
+                        if index == len(methods) - 1:
+                            if stored:
+                                # Keep the failed method as the first one to
+                                # try, so an unchanged unit recovers without an
+                                # HTTP-first detour; the first error is the one
+                                # about the method we expected to work.
+                                self._preferred_method = methods[0]
+                                self._method = None
+                                raise first_error
+                            raise
+                        _LOGGER.debug(
+                            "%s failed, trying %s",
+                            method.upper(),
+                            methods[index + 1].upper(),
+                        )
+                        continue
 
+                    if method != self._method:
                         _LOGGER.info(
                             "Discovered working communication method: %s", method.upper()
                         )
-                        self._method = method
-                        self._preferred_method = method
-                        break
+                    self._method = method
+                    self._preferred_method = method
+                    break
             finally:
                 # Set on every exit, a failed request included: what the
                 # module rations is connections, not answers, and firing the
