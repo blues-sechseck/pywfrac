@@ -5,7 +5,12 @@ Ground truth is the app's own `res/values/arrays.xml`
 flag order) - see capabilities.py's own docstring.
 """
 
+import pytest
+
+from pywfrac import OperationMode, RacParser
 from pywfrac.capabilities import get_capabilities
+
+from .live_captures import LIVE_CAPTURES
 
 
 def test_raw_0_falls_back_to_separate_2021():
@@ -48,3 +53,29 @@ def test_raw_64_is_fdt_2023():
 def test_unrecognized_raw_falls_back_to_separate_2021():
     caps = get_capabilities(99)
     assert caps == get_capabilities(0)
+
+
+_PLAIN = {
+    "AUTO": (18, 30), "COOL": (16, 30), "HEAT": (18, 30), "FAN": (18, 30), "DRY": (18, 30),
+}
+_RANGE_2 = {
+    "AUTO": (16, 30), "COOL": (16, 33), "HEAT": (10, 30), "FAN": (18, 30), "DRY": (16, 33),
+}
+
+
+@pytest.mark.parametrize(
+    ("raw_model", "expected"),
+    # zt_2025 (3) is the only preset_temp_range_2 table
+    [(0, _PLAIN), (1, _PLAIN), (2, _PLAIN), (64, _PLAIN), (3, _RANGE_2)],
+)
+def test_setpoint_range_per_mode(raw_model, expected):
+    caps = get_capabilities(raw_model)
+    for name, bounds in expected.items():
+        assert caps.setpoint_range(OperationMode[name]) == bounds
+
+
+def test_setpoint_range_accepts_the_raw_mode_an_aircon_reports():
+    aircon = RacParser().translate_bytes(LIVE_CAPTURES["on_heat"][0])
+
+    assert aircon.OperationMode == OperationMode.HEAT
+    assert aircon.Capabilities.setpoint_range(aircon.OperationMode) == (18, 30)

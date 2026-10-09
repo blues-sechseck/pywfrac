@@ -8,6 +8,8 @@ Ground truth: the app's own `res/values/arrays.xml`
 from dataclasses import dataclass
 from typing import Final
 
+from .enums import OperationMode
+
 
 @dataclass(frozen=True)
 class ModelCapabilities:
@@ -31,6 +33,25 @@ class ModelCapabilities:
     cool_hot_judge: bool
     preset_temp_range_2: bool
     operation_data: bool
+
+    def setpoint_range(self, mode: OperationMode) -> tuple[float, float]:
+        """Lowest and highest setpoint in degrees C that this mode accepts.
+
+        The manufacturer's operable table gives 18-30 throughout, but cooling
+        goes down to 16 on every model. preset_temp_range_2 models go further
+        per the app's own table: auto/cool/dry down to 16 and heat down to 10
+        (that heating floor is unconfirmed on hardware), cool and dry up to 33.
+        """
+        low = 16.0 if mode == OperationMode.COOL else 18.0
+        high = 30.0
+        if self.preset_temp_range_2:
+            if mode == OperationMode.HEAT:
+                low = 10.0
+            elif mode in (OperationMode.COOL, OperationMode.DRY, OperationMode.AUTO):
+                low = 16.0
+            if mode in (OperationMode.COOL, OperationMode.DRY):
+                high = 33.0
+        return low, high
 
 
 # Transcribed 1:1 from arrays.xml (item order == flag order above).
