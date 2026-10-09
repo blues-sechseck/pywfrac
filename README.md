@@ -29,6 +29,7 @@ pip install pywfrac
 import aiohttp
 from pywfrac import AirconCommands, Repository
 
+
 async def main() -> None:
     async with aiohttp.ClientSession() as session:
         repo = Repository(

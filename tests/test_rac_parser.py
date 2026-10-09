@@ -262,7 +262,7 @@ def test_home_leave_mode_trailer_status_request(parser):
     stat = _base_stat(HomeLeaveModeStatusRequest=True)
     trailer = parser._variable_trailer(stat)
     assert trailer[0] == 6  # six 4-byte groups
-    groups = [trailer[1 + i * 4:5 + i * 4] for i in range(6)]
+    groups = [trailer[1 + i * 4 : 5 + i * 4] for i in range(6)]
     for group, sub in zip(groups, (27, 28, 29, 30, 31, 32)):
         assert list(group) == [248, 255, sub, 0]
 
@@ -274,9 +274,14 @@ def test_home_leave_mode_trailer_set_values(parser):
     )
     trailer = parser._variable_trailer(stat)
     assert trailer[0] == 6
-    groups = [trailer[1 + i * 4:5 + i * 4] for i in range(6)]
+    groups = [trailer[1 + i * 4 : 5 + i * 4] for i in range(6)]
     expected = [
-        (27, 70), (28, 0), (29, 66), (30, 20), (31, 0), (32, 14),
+        (27, 70),
+        (28, 0),
+        (29, 66),
+        (30, 20),
+        (31, 0),
+        (32, 14),
     ]
     for group, (sub, value) in zip(groups, expected):
         assert list(group) == [248, 0, sub, value]
@@ -292,7 +297,7 @@ def test_home_leave_mode_encode_decode_round_trip(parser):
     )
     trailer = parser._variable_trailer(stat)
     signed = lambda b: b - 256 if b > 127 else b
-    groups = [trailer[1 + i * 4:5 + i * 4] for i in range(6)]
+    groups = [trailer[1 + i * 4 : 5 + i * 4] for i in range(6)]
     vals = []
     for group in groups:
         tag, _marker, sub, value = group
@@ -309,7 +314,7 @@ def test_service_data_trailer_status_request(parser):
     stat = _base_stat(ServiceDataStatusRequest=requested_codes)
     trailer = parser._variable_trailer(stat)
     assert trailer[0] == len(requested_codes)
-    groups = [trailer[1 + i * 4:5 + i * 4] for i in range(len(requested_codes))]
+    groups = [trailer[1 + i * 4 : 5 + i * 4] for i in range(len(requested_codes))]
     for group, code in zip(groups, sorted(requested_codes)):
         # OP1=OP2=OP3=255 -> "report current value", never 0 (a write to the
         # climate MCU).
@@ -530,11 +535,41 @@ def test_add_crc16_appends_little_endian(parser):
 @pytest.mark.parametrize(
     "stat_kwargs",
     [
-        {"Operation": True, "OperationMode": 0, "AirFlow": 0, "WindDirectionUD": 0, "WindDirectionLR": 0},
-        {"Operation": True, "OperationMode": 1, "AirFlow": 1, "WindDirectionUD": 2, "WindDirectionLR": 3},
-        {"Operation": True, "OperationMode": 2, "AirFlow": 4, "WindDirectionUD": 4, "WindDirectionLR": 7},
-        {"Operation": False, "OperationMode": 3, "AirFlow": 2, "WindDirectionUD": 3, "WindDirectionLR": 5},
-        {"Operation": True, "OperationMode": 4, "AirFlow": 3, "WindDirectionUD": 1, "WindDirectionLR": 1},
+        {
+            "Operation": True,
+            "OperationMode": 0,
+            "AirFlow": 0,
+            "WindDirectionUD": 0,
+            "WindDirectionLR": 0,
+        },
+        {
+            "Operation": True,
+            "OperationMode": 1,
+            "AirFlow": 1,
+            "WindDirectionUD": 2,
+            "WindDirectionLR": 3,
+        },
+        {
+            "Operation": True,
+            "OperationMode": 2,
+            "AirFlow": 4,
+            "WindDirectionUD": 4,
+            "WindDirectionLR": 7,
+        },
+        {
+            "Operation": False,
+            "OperationMode": 3,
+            "AirFlow": 2,
+            "WindDirectionUD": 3,
+            "WindDirectionLR": 5,
+        },
+        {
+            "Operation": True,
+            "OperationMode": 4,
+            "AirFlow": 3,
+            "WindDirectionUD": 1,
+            "WindDirectionLR": 1,
+        },
     ],
 )
 def test_receive_to_bytes_round_trips_through_parse_basic_settings(parser, stat_kwargs):
@@ -614,9 +649,18 @@ def test_an_unencodable_fan_value_fails_the_whole_frame(parser):
 
 
 def test_receive_to_bytes_entrust_round_trips(parser):
-    stat = AirconStat(Operation=True, OperationMode=0, AirFlow=0, WindDirectionUD=0,
-                       WindDirectionLR=0, PresetTemp=22.0, Entrust=True, ModelNr=0,
-                       Vacant=False, CoolHotJudge=False)
+    stat = AirconStat(
+        Operation=True,
+        OperationMode=0,
+        AirFlow=0,
+        WindDirectionUD=0,
+        WindDirectionLR=0,
+        PresetTemp=22.0,
+        Entrust=True,
+        ModelNr=0,
+        Vacant=False,
+        CoolHotJudge=False,
+    )
     content = parser.receive_to_bytes(stat)
     ac = Aircon()
     parser._parse_basic_settings(ac, content)
@@ -664,9 +708,17 @@ def test_receive_to_bytes_falls_back_to_model_nr_without_raw(parser, model_nr, e
 
 def _base_stat(**overrides) -> AirconStat:
     defaults = dict(
-        Operation=True, OperationMode=1, AirFlow=0, WindDirectionUD=0,
-        WindDirectionLR=0, PresetTemp=22.0, Entrust=False, ModelNr=1,
-        Vacant=False, CoolHotJudge=True, IsSelfCleanOperation=False,
+        Operation=True,
+        OperationMode=1,
+        AirFlow=0,
+        WindDirectionUD=0,
+        WindDirectionLR=0,
+        PresetTemp=22.0,
+        Entrust=False,
+        ModelNr=1,
+        Vacant=False,
+        CoolHotJudge=True,
+        IsSelfCleanOperation=False,
         IsSelfCleanReset=False,
     )
     defaults.update(overrides)
@@ -834,11 +886,10 @@ def test_to_base64_writes_the_state_alongside_a_home_leave_mode_set(parser):
     # Setting Home Leave values is a real write, not a status request: its
     # command block stays the full one.
     setting = HomeLeaveModeSetting(TempRule=10.0, TempSetting=10.0, AirFlow=0)
-    stat = _base_stat(
-        HomeLeaveModeForCooling=setting, HomeLeaveModeForHeating=setting
-    )
+    stat = _base_stat(HomeLeaveModeForCooling=setting, HomeLeaveModeForHeating=setting)
     block = b64decode(parser.to_base64(stat))[:18]
     assert block == parser.command_to_byte(stat)
+
 
 def test_command_to_byte_external_temperature_defaults_to_internal_sensor(parser):
     stat_byte = parser.command_to_byte(_base_stat())
@@ -884,9 +935,7 @@ def test_command_to_byte_external_temperature_encodes_correctly(parser):
 def test_external_temperature_is_linear_over_the_living_range(temperature):
     # The manufacturer's table is (raw - 59) / 4 between 16 and 31 °C; the
     # SPI-bus projects' (raw - 61) / 4 would land every value 0.5 K warm.
-    assert RacParser.encode_external_temperature(temperature) == round(
-        temperature * 4
-    ) + 59
+    assert RacParser.encode_external_temperature(temperature) == round(temperature * 4) + 59
 
 
 @pytest.mark.parametrize(
@@ -955,9 +1004,7 @@ def test_external_temperature_raw_in_frame_follows_the_frame(
 
 
 @pytest.mark.parametrize("status_request", [True, False])
-def test_external_temperature_raw_in_frame_reports_the_carried_byte(
-    parser, status_request
-):
+def test_external_temperature_raw_in_frame_reports_the_carried_byte(parser, status_request):
     stat = _base_stat(
         Operation=True,
         OperationMode=1,

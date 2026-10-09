@@ -296,9 +296,7 @@ class Repository:
 
             if cert_exists:
                 _LOGGER.debug("Certificate file found, creating secure SSL context")
-                partial_func = functools.partial(
-                    ssl.create_default_context, cafile=self._cert_path
-                )
+                partial_func = functools.partial(ssl.create_default_context, cafile=self._cert_path)
                 ssl_context = await asyncio.to_thread(partial_func)
                 ssl_context.check_hostname = False
             else:
@@ -430,9 +428,7 @@ class Repository:
                 stored = self._method is not None
                 first = self._method or self._preferred_method
                 methods: tuple[str, ...] = (first,) if first else ()
-                methods += tuple(
-                    method for method in ("http", "https") if method not in methods
-                )
+                methods += tuple(method for method in ("http", "https") if method not in methods)
                 if not stored:
                     _LOGGER.debug("No stored method; attempting discovery...")
 
@@ -447,9 +443,7 @@ class Repository:
                     try:
                         json_response = await _execute_request(method)
                     except WfRacError as ex:
-                        answered = isinstance(
-                            ex, (WfRacCommandError, WfRacMalformedResponseError)
-                        )
+                        answered = isinstance(ex, (WfRacCommandError, WfRacMalformedResponseError))
                         if stored and index == 0 and answered:
                             raise
                         first_error = first_error or ex
@@ -468,12 +462,13 @@ class Repository:
                             method.upper(),
                             methods[index + 1].upper(),
                         )
+                        # The other protocol is a second connection, rationed
+                        # like any other.
+                        await asyncio.sleep(MIN_TIME_BETWEEN_REQUESTS.total_seconds())
                         continue
 
                     if method != self._method:
-                        _LOGGER.info(
-                            "Discovered working communication method: %s", method.upper()
-                        )
+                        _LOGGER.info("Discovered working communication method: %s", method.upper())
                     self._method = method
                     self._preferred_method = method
                     break
@@ -532,8 +527,7 @@ class Repository:
             return
         self._refused_commands[command] = code
         _LOGGER.debug(
-            "Aircon answered %r with result %s (%s) - the request was accepted "
-            "but not carried out",
+            "Aircon answered %r with result %s (%s) - the request was accepted but not carried out",
             command,
             code,
             describe_result(command, code),
@@ -554,9 +548,7 @@ class Repository:
         info = await self.get_info()
         return cast(str, info["airconId"])
 
-    async def update_account_info(
-        self, airco_id: str, time_zone: str
-    ) -> dict[str, Any]:
+    async def update_account_info(self, airco_id: str, time_zone: str) -> dict[str, Any]:
         """Update the account info on the airco (sets to operator id of the device)"""
         contents = {
             "accountId": self._operator_id,
@@ -588,9 +580,7 @@ class Repository:
                 "Aircon answered the registration without a readable result code"
             )
         if code == 2:
-            raise WfRacAccountTableFullError(
-                f"Aircon refused the registration: {RESULT_CODES[2]}"
-            )
+            raise WfRacAccountTableFullError(f"Aircon refused the registration: {RESULT_CODES[2]}")
         if code in RESULT_CODES and code != 0:
             raise WfRacCommandError(
                 f"Aircon refused the registration with result {code} ({RESULT_CODES[code]})"
@@ -730,9 +720,7 @@ class Repository:
         return self._parser.to_base64(stat)
 
     async def _async_set_state(self, airco_id: str, frame: str) -> Aircon:
-        result = await self._post(
-            "setAirconStat", {"airconId": airco_id, "airconStat": frame}
-        )
+        result = await self._post("setAirconStat", {"airconId": airco_id, "airconStat": frame})
         code = _result_code(result)
         if code in WRITE_REFUSED_CODES:
             raise WfRacWriteRefusedError(
@@ -773,9 +761,7 @@ class Repository:
         operation-data requests - see Device.SERVICE_DATA_STAMP_BACKDATE.
         """
         contents = {"airconId": airco_id, "airconStat": command}
-        result = await self._post(
-            "setAirconStat", contents, timestamp_offset=timestamp_offset
-        )
+        result = await self._post("setAirconStat", contents, timestamp_offset=timestamp_offset)
         try:
             code = int(result.get("result", 0))
         except (TypeError, ValueError):

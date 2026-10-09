@@ -15,6 +15,7 @@ from pywfrac import RacParser
 from pywfrac.models.aircon import AirconCommands, AirconStat
 from pywfrac.models.status import AirconStatus, FirmwareInfo
 from pywfrac.repository import (
+    MIN_TIME_BETWEEN_REQUESTS,
     RESULT_CODES,
     WRITE_LOCK_MAX_WAIT,
     WRITE_LOCK_RETRY_DELAY,
@@ -75,9 +76,7 @@ class _FakeSession:
 def repository():
     def _build(outcomes, method="http"):
         session = _FakeSession(outcomes)
-        repo = Repository(
-            session, "127.0.0.1", 51443, "operator-id", "device-id", method=method
-        )
+        repo = Repository(session, "127.0.0.1", 51443, "operator-id", "device-id", method=method)
         return repo, session
 
     return _build
@@ -111,8 +110,7 @@ async def test_timeout_raises_connection_error(repository):
 # Neither is a refusal, and neither must escape as a plain ValueError - that
 # skipped every caller's retry handling and took the unit straight offline.
 _GARBLED_BODY = (
-    b'{"result":0,"airconStat":"AACqj6r/AAAIAAAUigAAAAAAAf////9hp4\xd3EECAcqmg==",'
-    b'"numOfAccount":1}'
+    b'{"result":0,"airconStat":"AACqj6r/AAAIAAAUigAAAAAAAf////9hp4\xd3EECAcqmg==","numOfAccount":1}'
 )
 
 
@@ -154,9 +152,7 @@ async def test_a_garbled_body_keeps_the_discovered_method(repository):
     """The unit answered over this protocol, so there is nothing to rediscover
     - unlike a transport outage, which may mean the firmware changed branch.
     """
-    repo, session = repository(
-        [_FakeResponse(200, _GARBLED_BODY), _FakeResponse(200, _OK_BODY)]
-    )
+    repo, session = repository([_FakeResponse(200, _GARBLED_BODY), _FakeResponse(200, _OK_BODY)])
 
     with pytest.raises(WfRacMalformedResponseError):
         await repo.get_aircon_stats("airco-id")
@@ -269,12 +265,8 @@ async def test_both_methods_failing_raises_the_stored_methods_error(repository):
     assert error.value.__cause__ is first
 
 
-@pytest.mark.parametrize(
-    ("old_method", "new_method"), (("http", "https"), ("https", "http"))
-)
-async def test_a_stored_method_falls_back_within_the_same_call(
-    repository, old_method, new_method
-):
+@pytest.mark.parametrize(("old_method", "new_method"), (("http", "https"), ("https", "http")))
+async def test_a_stored_method_falls_back_within_the_same_call(repository, old_method, new_method):
     """A firmware line that changes protocol must not cost a failed request."""
     repo, session = repository(
         [ClientConnectionError("old protocol refused"), _FakeResponse(200, _OK_BODY)],
@@ -291,9 +283,25 @@ async def test_a_stored_method_falls_back_within_the_same_call(
     ]
 
 
-@pytest.mark.parametrize(
-    "outcome", [_FakeResponse(501, "no"), _FakeResponse(200, _GARBLED_BODY)]
-)
+async def test_the_other_protocol_waits_its_turn(repository):
+    """The fallback is a second connection, spaced like any other."""
+    repo, _ = repository(
+        [ClientConnectionError("old protocol refused"), _FakeResponse(200, _OK_BODY)],
+        method="http",
+    )
+    repo._ssl_context = ssl.create_default_context()
+    waits: list[float] = []
+
+    async def _sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    with patch("pywfrac.repository.asyncio.sleep", _sleep):
+        await repo.get_aircon_stats("airco-id")
+
+    assert MIN_TIME_BETWEEN_REQUESTS.total_seconds() in waits
+
+
+@pytest.mark.parametrize("outcome", [_FakeResponse(501, "no"), _FakeResponse(200, _GARBLED_BODY)])
 async def test_a_stored_method_that_answered_is_not_second_guessed(repository, outcome):
     repo, session = repository([outcome], method="http")
 
@@ -338,10 +346,7 @@ async def test_refusal_in_the_result_field_is_reported_once(repository, caplog):
     )
 
     def _reports():
-        return [
-            r for r in caplog.records
-            if "was accepted but not carried out" in r.message
-        ]
+        return [r for r in caplog.records if "was accepted but not carried out" in r.message]
 
     # The caller still gets the response: nothing about the control flow moves.
     assert await repo.get_aircon_stats("airco-id") == {"airconStat": "AAA="}
@@ -518,9 +523,7 @@ async def test_ssl_context_uses_the_certificate_file_when_present(repository, tm
     fallback.
     """
     cert_path = tmp_path / "ac_cert.pem"
-    cert_path.write_text(
-        "-----BEGIN CERTIFICATE-----\nMA==\n-----END CERTIFICATE-----\n"
-    )
+    cert_path.write_text("-----BEGIN CERTIFICATE-----\nMA==\n-----END CERTIFICATE-----\n")
     session = _FakeSession([])
     repo = Repository(
         session,
@@ -790,9 +793,7 @@ def _recorded(session):
 
 
 def _set_answer(code=0, stat=_STAT):
-    return _FakeResponse(
-        200, json.dumps({"result": code, "contents": {"airconStat": stat}})
-    )
+    return _FakeResponse(200, json.dumps({"result": code, "contents": {"airconStat": stat}}))
 
 
 def _frame(base_stat, **params):
@@ -823,9 +824,7 @@ async def test_send_command_encodes_the_full_block_and_returns_the_answer(reposi
     bodies = _recorded(session)
     base = RacParser().translate_bytes(_STAT)
 
-    result = await repo.async_send_command(
-        "airco-id", base, {AirconCommands.PresetTemp: 22.5}
-    )
+    result = await repo.async_send_command("airco-id", base, {AirconCommands.PresetTemp: 22.5})
 
     assert bodies[0]["command"] == "setAirconStat"
     assert bodies[0]["contents"] == {
@@ -837,9 +836,7 @@ async def test_send_command_encodes_the_full_block_and_returns_the_answer(reposi
 
 
 @pytest.mark.parametrize("code", [10, 20, 99, 429])
-async def test_send_command_treats_known_failure_codes_as_command_errors(
-    repository, sleeps, code
-):
+async def test_send_command_treats_known_failure_codes_as_command_errors(repository, sleeps, code):
     repo, _ = repository([_set_answer(code)])
 
     with pytest.raises(WfRacCommandError) as error:
@@ -852,9 +849,7 @@ async def test_send_command_treats_known_failure_codes_as_command_errors(
 async def test_send_command_lets_an_unknown_code_with_state_through(repository, sleeps):
     repo, _ = repository([_set_answer(77)])
 
-    result = await repo.async_send_command(
-        "airco-id", RacParser().translate_bytes(_STAT), {}
-    )
+    result = await repo.async_send_command("airco-id", RacParser().translate_bytes(_STAT), {})
 
     assert result.Operation is True
 
@@ -874,9 +869,7 @@ async def test_send_command_malformed_answers_are_typed(repository, sleeps, body
         await repo.async_send_command("airco-id", RacParser().translate_bytes(_STAT), {})
 
 
-async def test_send_command_waits_out_the_lock_and_resends_from_the_fresh_state(
-    repository, sleeps
-):
+async def test_send_command_waits_out_the_lock_and_resends_from_the_fresh_state(repository, sleeps):
     """The other client's state is in the status answer; a retry built from the
     stale block would hand its fields straight back and revert them.
     """
@@ -892,9 +885,7 @@ async def test_send_command_waits_out_the_lock_and_resends_from_the_fresh_state(
     base = RacParser().translate_bytes(_STAT)
 
     with patch("pywfrac.repository.time.time", return_value=1_000_000.0):
-        await repo.async_send_command(
-            "airco-id", base, {AirconCommands.Operation: False}
-        )
+        await repo.async_send_command("airco-id", base, {AirconCommands.Operation: False})
 
     assert [b["command"] for b in bodies] == [
         "setAirconStat",
@@ -932,9 +923,7 @@ async def test_send_command_clamps_the_lock_wait(repository, sleeps, expires, ex
 
 async def test_send_command_falls_back_when_the_status_is_unreadable(repository, sleeps):
     """The retry then goes out with the state the caller supplied."""
-    repo, session = repository(
-        [_set_answer(11), _FakeResponse(200, "[]"), _set_answer(0)]
-    )
+    repo, session = repository([_set_answer(11), _FakeResponse(200, "[]"), _set_answer(0)])
     bodies = _recorded(session)
 
     await repo.async_send_command(
@@ -978,9 +967,7 @@ async def test_send_command_registers_and_resends_the_same_frame(repository, sle
 async def test_send_command_registers_with_the_time_zone_of_an_earlier_registration(
     repository, sleeps
 ):
-    repo, session = repository(
-        [_result(0), _set_answer(2), _result(0), _set_answer(0)]
-    )
+    repo, session = repository([_result(0), _set_answer(2), _result(0), _set_answer(0)])
     bodies = _recorded(session)
     await repo.async_register("airco-id", "Asia/Tokyo")
 
@@ -1019,7 +1006,12 @@ async def test_send_command_without_a_known_time_zone_cannot_register(repository
 async def test_time_zone_constructor_argument_enables_re_registration(sleeps):
     session = _FakeSession([_set_answer(2), _result(0), _set_answer(0)])
     repo = Repository(
-        session, "127.0.0.1", 51443, "operator-id", "device-id", method="http",
+        session,
+        "127.0.0.1",
+        51443,
+        "operator-id",
+        "device-id",
+        method="http",
         time_zone="Europe/Berlin",
     )
 

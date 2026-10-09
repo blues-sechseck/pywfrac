@@ -56,10 +56,18 @@ def test_unrecognized_raw_falls_back_to_separate_2021():
 
 
 _PLAIN = {
-    "AUTO": (18, 30), "COOL": (16, 30), "HEAT": (18, 30), "FAN": (18, 30), "DRY": (18, 30),
+    "AUTO": (18, 30),
+    "COOL": (16, 30),
+    "HEAT": (18, 30),
+    "FAN": (18, 30),
+    "DRY": (18, 30),
 }
 _RANGE_2 = {
-    "AUTO": (16, 30), "COOL": (16, 33), "HEAT": (10, 30), "FAN": (18, 30), "DRY": (16, 33),
+    "AUTO": (16, 30),
+    "COOL": (16, 33),
+    "HEAT": (10, 30),
+    "FAN": (18, 30),
+    "DRY": (16, 33),
 }
 
 
