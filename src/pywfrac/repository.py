@@ -15,6 +15,9 @@ from typing import Any, cast
 import aiohttp
 from aiohttp import ClientError, ClientSession
 
+from .models.status import AirconStatus, FirmwareInfo
+from .parser import RacParser
+
 _LOGGER = logging.getLogger(__name__)
 # log http requests/responses to separate logger, to allow easily turning on/off from
 # configuration.yaml
@@ -108,6 +111,14 @@ def describe_result(command: str, code: int) -> str:
 # "your account is not known here". See RESULT_CODES above and
 # WfRacWriteRefusedError.
 WRITE_REFUSED_CODES = frozenset({1, 11, 12})
+
+
+def _result_code(response: dict[str, Any]) -> int | None:
+    """The `result` of an answer, or None where it is absent or unreadable."""
+    try:
+        return int(response["result"])
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _create_permissive_ssl_context() -> ssl.SSLContext:
@@ -240,6 +251,7 @@ class Repository:
         # concurrent callers (a plain timestamp check allowed a race where two
         # requests both see the wait as satisfied and fire back-to-back).
         self._request_lock = asyncio.Lock()
+        self._parser = RacParser()
 
     @property
     def method(self) -> str | None:
@@ -304,12 +316,20 @@ class Repository:
                 f"({ex}): {self._redact_text(_printable(raw))}"
             ) from ex
         try:
-            return cast(dict[str, Any], json.loads(text))
+            parsed = json.loads(text)
         except json.JSONDecodeError as ex:
             raise WfRacMalformedResponseError(
                 f"Aircon answered {command!r} with a body that is not JSON "
                 f"({ex}): {self._redact_text(text)}"
             ) from ex
+        # Valid JSON of another shape (null, a list, a bare string) would
+        # otherwise surface as an AttributeError from the first .get().
+        if not isinstance(parsed, dict):
+            raise WfRacMalformedResponseError(
+                f"Aircon answered {command!r} with JSON that is not an object: "
+                f"{self._redact_text(text)}"
+            )
+        return cast(dict[str, Any], parsed)
 
     async def _post(
         self,
@@ -552,6 +572,47 @@ class Repository:
         contents = {"airconId": airco_id} if airco_id is not None else None
         result = await self._post("getAirconStat", contents)
         return result if raw else cast(dict[str, Any], result["contents"])
+
+    async def async_get_status(self, airco_id: str) -> AirconStatus:
+        """Read and decode the unit's state, firmware strings and lock deadline.
+
+        Raises only WfRacError subclasses:
+        - WfRacConnectionError: nothing usable arrived (transport failure).
+        - WfRacCommandError: HTTP error status, or any non-zero result
+          without state (result 1: no fresh data from the bridge MCU).
+
+        Reads are not account-checked by the module, so an unregistered
+        client can still read and a poll never means "evicted" - registration
+        problems surface only on setAirconStat.
+        - WfRacMalformedResponseError: the answer is not an object, or its
+          airconStat is missing or cannot be decoded. A subclass of
+          WfRacConnectionError.
+        """
+        response = await self._post("getAirconStat", {"airconId": airco_id})
+        contents = response.get("contents")
+        stat = contents.get("airconStat") if isinstance(contents, dict) else None
+        if not isinstance(contents, dict) or not isinstance(stat, str):
+            code = _result_code(response)
+            if code:
+                raise WfRacCommandError(
+                    f"Aircon answered getAirconStat with result {code} "
+                    f"({describe_result('getAirconStat', code)}) and no state"
+                )
+            raise WfRacMalformedResponseError(
+                "Aircon answered getAirconStat without a usable airconStat"
+            )
+        try:
+            aircon = self._parser.translate_bytes(stat)
+        except ValueError as ex:
+            raise WfRacMalformedResponseError(
+                f"Aircon answered getAirconStat with an undecodable airconStat: {ex}"
+            ) from ex
+        expires = contents.get("expires")
+        return AirconStatus(
+            aircon=aircon,
+            firmware=FirmwareInfo.from_contents(contents),
+            expires=expires if type(expires) is int else None,
+        )
 
     async def send_airco_command(
         self, airco_id: str, command: str, *, timestamp_offset: int = 0

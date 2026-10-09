@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 from aiohttp import ClientConnectionError, ClientPayloadError
 
+from pywfrac.models.status import AirconStatus, FirmwareInfo
 from pywfrac.repository import (
     Repository,
     WfRacCommandError,
@@ -19,6 +20,9 @@ from pywfrac.repository import (
     WfRacWriteRefusedError,
 )
 
+from .live_captures import LIVE_CAPTURES
+
+_STAT = LIVE_CAPTURES["on_cool"][0]
 _OK_BODY = json.dumps({"result": 0, "contents": {"airconId": "airco-id"}})
 
 
@@ -493,3 +497,146 @@ async def test_ssl_context_falls_back_when_no_cert_path_given(repository):
     context = await repo._get_ssl_context()
 
     assert context.verify_mode == ssl.CERT_NONE
+
+
+@pytest.mark.parametrize("body", ["null", "[]", '"text"', "12", "true"])
+async def test_a_body_that_is_not_an_object_is_malformed(repository, body):
+    """Valid JSON of another shape used to escape as AttributeError from the
+    result-code bookkeeping, past every caller's error handling.
+    """
+    repo, _ = repository([_FakeResponse(200, body)])
+
+    with pytest.raises(WfRacMalformedResponseError, match="not an object"):
+        await repo.get_aircon_stats("airco-id")
+
+
+def _status_body(**contents):
+    return json.dumps({"result": 0, "contents": {"airconStat": _STAT, **contents}})
+
+
+async def test_get_status_decodes_state_firmware_and_deadline(repository):
+    repo, session = repository(
+        [
+            _FakeResponse(
+                200,
+                _status_body(
+                    firmType="WF-RAC",
+                    mcu={"firmVer": "010"},
+                    wireless={"firmVer": "131"},
+                    expires=1_700_000_060,
+                ),
+            )
+        ]
+    )
+
+    status = await repo.async_get_status("airco-id")
+
+    assert isinstance(status, AirconStatus)
+    assert status.aircon.Operation is True
+    assert status.aircon.PresetTemp == 26.0
+    assert status.firmware == FirmwareInfo("WF-RAC", "010", "131")
+    assert str(status.firmware) == "WF-RAC, mcu: 010, wireless: 131"
+    assert status.expires == 1_700_000_060
+    assert session.urls == ["http://127.0.0.1:51443/beaver/command/getAirconStat"]
+
+
+async def test_get_status_sends_the_airco_id(repository):
+    repo, session = repository([_FakeResponse(200, _status_body())])
+    sent = []
+    original_post = session.post
+
+    def _recording_post(url, **kwargs):
+        sent.append(kwargs["json"])
+        return original_post(url, **kwargs)
+
+    session.post = _recording_post
+
+    await repo.async_get_status("airco-id")
+
+    assert sent[0]["contents"] == {"airconId": "airco-id"}
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {},
+        {"firmType": "", "mcu": "010", "wireless": None},
+        {"firmType": None, "mcu": [], "wireless": {"firmVer": ""}},
+        {"mcu": {"other": 1}, "wireless": 3},
+    ],
+)
+async def test_get_status_reports_missing_firmware_as_unknown(repository, extra):
+    repo, _ = repository([_FakeResponse(200, _status_body(**extra))])
+
+    status = await repo.async_get_status("airco-id")
+
+    assert status.firmware == FirmwareInfo()
+    assert str(status.firmware) == "unknown, mcu: unknown, wireless: unknown"
+
+
+@pytest.mark.parametrize("expires", [None, "1700000060", 1.5, True, [1]])
+async def test_get_status_keeps_only_an_integer_deadline(repository, expires):
+    repo, _ = repository([_FakeResponse(200, _status_body(expires=expires))])
+
+    assert (await repo.async_get_status("airco-id")).expires is None
+
+
+async def test_get_status_never_blames_the_account(repository):
+    """Reads are not account-checked, so result 2 without state is no eviction."""
+    repo, _ = repository([_FakeResponse(200, json.dumps({"result": 2}))])
+
+    with pytest.raises(WfRacCommandError) as error:
+        await repo.async_get_status("airco-id")
+
+    assert not isinstance(error.value, WfRacRegistrationError)
+
+
+async def test_get_status_result_2_with_state_still_succeeds(repository):
+    body = json.dumps({"result": 2, "contents": {"airconStat": _STAT}})
+    repo, _ = repository([_FakeResponse(200, body)])
+
+    assert (await repo.async_get_status("airco-id")).aircon.Operation is True
+
+
+async def test_get_status_maps_other_results_without_state_to_command_error(repository):
+    repo, _ = repository([_FakeResponse(200, json.dumps({"result": 1, "contents": {}}))])
+
+    with pytest.raises(WfRacCommandError, match="no fresh data") as error:
+        await repo.async_get_status("airco-id")
+
+    assert not isinstance(error.value, WfRacRegistrationError)
+
+
+async def test_get_status_http_error_is_a_command_error(repository):
+    repo, _ = repository([_FakeResponse(400, "bad request")])
+
+    with pytest.raises(WfRacCommandError):
+        await repo.async_get_status("airco-id")
+
+
+async def test_get_status_transport_failure_is_a_connection_error(repository):
+    repo, _ = repository([ClientConnectionError("boom")])
+
+    with pytest.raises(WfRacConnectionError):
+        await repo.async_get_status("airco-id")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        json.dumps({"result": 0}),
+        json.dumps({"result": 0, "contents": "x"}),
+        json.dumps({"result": 0, "contents": {}}),
+        json.dumps({"result": 0, "contents": {"airconStat": None}}),
+        json.dumps({"result": 0, "contents": {"airconStat": 5}}),
+        json.dumps({"result": 0, "contents": {"airconStat": "!!notbase64"}}),
+        json.dumps({"result": 0, "contents": {"airconStat": "AAAA"}}),
+        "[]",
+        "null",
+    ],
+)
+async def test_get_status_malformed_answers_are_typed(repository, body):
+    repo, _ = repository([_FakeResponse(200, body)])
+
+    with pytest.raises(WfRacMalformedResponseError):
+        await repo.async_get_status("airco-id")

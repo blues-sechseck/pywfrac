@@ -12,6 +12,7 @@ from .capabilities import ModelCapabilities, get_capabilities
 from .enums import AirFlow, OperationMode, WindDirectionLR, WindDirectionUD
 from .error_codes import describe_error_code
 from .models.aircon import Aircon, AirconCommands, AirconStat, HomeLeaveModeSetting
+from .models.status import AirconStatus, FirmwareInfo
 from .parser import (
     AIRFLOW_UNKNOWN,
     EXTERNAL_TEMPERATURE_MAX,
@@ -63,6 +64,8 @@ __all__ = [
     "MIN_TIME_BETWEEN_REQUESTS",
     "REQUEST_TIMEOUT",
     "Aircon",
+    "AirconStatus",
+    "FirmwareInfo",
     "AirconStat",
     "AirconCommands",
     "HomeLeaveModeSetting",
