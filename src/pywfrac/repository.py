@@ -9,12 +9,14 @@ import logging
 import os
 import ssl
 import time
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any, cast
 
 import aiohttp
 from aiohttp import ClientError, ClientSession
 
+from .models.aircon import Aircon, AirconCommands, AirconStat
 from .models.status import AirconStatus, FirmwareInfo
 from .parser import RacParser
 
@@ -111,6 +113,15 @@ def describe_result(command: str, code: int) -> str:
 # "your account is not known here". See RESULT_CODES above and
 # WfRacWriteRefusedError.
 WRITE_REFUSED_CODES = frozenset({1, 11, 12})
+
+
+# Fallback wait for a refused command, used where the remaining lock time
+# cannot be established. One retry, not a loop.
+WRITE_LOCK_RETRY_DELAY = timedelta(seconds=10)
+
+# The lock runs 60 seconds, so a longer deadline came from a client whose clock
+# is off.
+WRITE_LOCK_MAX_WAIT = timedelta(seconds=61)
 
 
 def _result_code(response: dict[str, Any]) -> int | None:
@@ -670,6 +681,93 @@ class Repository:
             firmware=FirmwareInfo.from_contents(contents),
             expires=expires if type(expires) is int else None,
         )
+
+    async def async_send_command(
+        self, airco_id: str, base: Aircon, params: Mapping[AirconCommands, Any]
+    ) -> Aircon:
+        """Apply `params` on top of `base` and return the state the unit reports.
+
+        Every frame is a full state block, so `base` must be the latest state
+        the caller has. Raises only WfRacError subclasses, except ValueError
+        for a value that has no encoding.
+
+        - WfRacWriteRefusedError: another client holds the 60 s write lock.
+          The status answer carries that client's state and the deadline, so
+          this waits for the lapse, re-encodes from the fresh state and tries
+          once more.
+        - WfRacRegistrationError: registers (needs the time zone from the
+          constructor or an earlier async_register) and tries once more with
+          the same frame.
+        - Any other non-zero result the library knows is WfRacCommandError.
+        """
+        frame = self._encode_command(base, params)
+        try:
+            return await self._async_set_state(airco_id, frame)
+        except WfRacWriteRefusedError:
+            fresh = base
+            delay = WRITE_LOCK_RETRY_DELAY.total_seconds()
+            try:
+                status = await self.async_get_status(airco_id)
+            except WfRacError:
+                pass
+            else:
+                fresh = status.aircon
+                if status.expires is not None:
+                    # Whole seconds, refused while `expires` still equals the
+                    # current one, so land past the lapse. Epoch: a naive
+                    # datetime is out when DST ends.
+                    remaining = status.expires - time.time() + 1
+                    delay = max(0.0, min(remaining, WRITE_LOCK_MAX_WAIT.total_seconds()))
+            await asyncio.sleep(delay)
+            # A frame built before the refusal would revert what the other
+            # client wrote.
+            return await self._async_set_state(airco_id, self._encode_command(fresh, params))
+        except WfRacRegistrationError:
+            # Result 2 can also be a transient MCU exchange failure; the single
+            # retry covers that as well.
+            if self._time_zone is None:
+                raise
+            await self.async_register(airco_id, self._time_zone)
+            return await self._async_set_state(airco_id, frame)
+
+    def _encode_command(self, base: Aircon, params: Mapping[AirconCommands, Any]) -> str:
+        stat = AirconStat.from_aircon(base)
+        for key, value in params.items():
+            setattr(stat, key, value)
+        return self._parser.to_base64(stat)
+
+    async def _async_set_state(self, airco_id: str, frame: str) -> Aircon:
+        result = await self._post(
+            "setAirconStat", {"airconId": airco_id, "airconStat": frame}
+        )
+        code = _result_code(result)
+        if code in WRITE_REFUSED_CODES:
+            raise WfRacWriteRefusedError(
+                f"Aircon refused setAirconStat with result {code} "
+                f"({describe_result('setAirconStat', code)})"
+            )
+        if code == 2:
+            raise WfRacRegistrationError(
+                f"Aircon refused setAirconStat with result {code} "
+                f"({describe_result('setAirconStat', code)})"
+            )
+        if code and code in RESULT_CODES:
+            raise WfRacCommandError(
+                f"Aircon refused setAirconStat with result {code} "
+                f"({describe_result('setAirconStat', code)})"
+            )
+        contents = result.get("contents")
+        stat = contents.get("airconStat") if isinstance(contents, dict) else None
+        if not isinstance(stat, str):
+            raise WfRacMalformedResponseError(
+                "Aircon answered setAirconStat without a usable airconStat"
+            )
+        try:
+            return self._parser.translate_bytes(stat)
+        except ValueError as ex:
+            raise WfRacMalformedResponseError(
+                f"Aircon answered setAirconStat with an undecodable airconStat: {ex}"
+            ) from ex
 
     async def send_airco_command(
         self, airco_id: str, command: str, *, timestamp_offset: int = 0
