@@ -70,7 +70,9 @@ Pass `time_zone` to let `async_send_command` register again by itself.
 `RacParser` turns a raw `getAirconStat` response into an `Aircon`/`AirconStat`
 object and back; see the protocol reference linked below for the field
 layout. `ModelCapabilities.setpoint_range(mode)` gives the setpoint limits for
-a mode.
+a mode. `Aircon.operation_mode`, `air_flow`, `wind_direction_ud` and
+`wind_direction_lr` give the raw fields as enums, or `None` where the unit sent
+a value without a member (e.g. an unknown airflow).
 
 ## Protocol reference
 

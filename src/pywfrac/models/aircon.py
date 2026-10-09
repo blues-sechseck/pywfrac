@@ -1,9 +1,21 @@
 """Aircon Base"""
 
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import IntEnum, StrEnum
+from typing import TypeVar
 
 from ..capabilities import ModelCapabilities, get_capabilities
+from ..enums import AirFlow, OperationMode, WindDirectionLR, WindDirectionUD
+
+_E = TypeVar("_E", bound=IntEnum)
+
+
+def _member(enum: type[_E], raw: int | None) -> _E | None:
+    """The member for a raw value, None when the unit sent none we know."""
+    try:
+        return enum(raw) if raw is not None else None
+    except ValueError:
+        return None
 
 
 class AirconCommands(StrEnum):
@@ -133,6 +145,26 @@ class Aircon(AirconBase):
     # code - decoded or not. The undecoded ones are what a reader without a
     # formula still gets to look at.
     ServiceDataRaw: dict[int, tuple[int, int, int]] = field(default_factory=dict)
+
+    @property
+    def operation_mode(self) -> OperationMode | None:
+        """OperationMode as an enum, None for a value without a member."""
+        return _member(OperationMode, self.OperationMode)
+
+    @property
+    def air_flow(self) -> AirFlow | None:
+        """AirFlow as an enum, None for AIRFLOW_UNKNOWN or any other non-member."""
+        return _member(AirFlow, self.AirFlow)
+
+    @property
+    def wind_direction_ud(self) -> WindDirectionUD | None:
+        """WindDirectionUD as an enum, None for a value without a member."""
+        return _member(WindDirectionUD, self.WindDirectionUD)
+
+    @property
+    def wind_direction_lr(self) -> WindDirectionLR | None:
+        """WindDirectionLR as an enum, None for no member or an absent field."""
+        return _member(WindDirectionLR, self.WindDirectionLR)
 
 
 @dataclass
