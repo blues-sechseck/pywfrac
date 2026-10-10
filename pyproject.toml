@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pywfrac"
-version = "0.1.7"
+version = "0.1.8"
 description = "Async client library for Mitsubishi Heavy Industries WF-RAC WiFi module air conditioners"
 readme = "README.md"
 license = "MIT"
@@ -40,7 +40,7 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/blues-sechseck/pywfrac"
-"Protocol reference" = "https://github.com/blues-sechseck/Mitsubishi-WF-RAC-Integration/blob/main/ha-integration/docs/wf-rac-module-reference.md"
+"Protocol reference" = "https://github.com/blues-sechseck/Mitsubishi-WF-RAC-Integration/blob/main/docs/wf-rac-module-reference.md"
 Changelog = "https://github.com/blues-sechseck/pywfrac/releases"
 
 [tool.hatch.build.targets.wheel]

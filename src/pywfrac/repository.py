@@ -9,11 +9,16 @@ import logging
 import os
 import ssl
 import time
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any, cast
 
 import aiohttp
 from aiohttp import ClientError, ClientSession
+
+from .models.aircon import Aircon, AirconCommands, AirconStat
+from .models.status import AirconStatus, FirmwareInfo
+from .parser import RacParser
 
 _LOGGER = logging.getLogger(__name__)
 # log http requests/responses to separate logger, to allow easily turning on/off from
@@ -110,6 +115,23 @@ def describe_result(command: str, code: int) -> str:
 WRITE_REFUSED_CODES = frozenset({1, 11, 12})
 
 
+# Fallback wait for a refused command, used where the remaining lock time
+# cannot be established. One retry, not a loop.
+WRITE_LOCK_RETRY_DELAY = timedelta(seconds=10)
+
+# The lock runs 60 seconds, so a longer deadline came from a client whose clock
+# is off.
+WRITE_LOCK_MAX_WAIT = timedelta(seconds=61)
+
+
+def _result_code(response: dict[str, Any]) -> int | None:
+    """The `result` of an answer, or None where it is absent or unreadable."""
+    try:
+        return int(response["result"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _create_permissive_ssl_context() -> ssl.SSLContext:
     """Build a permissive SSL context for units without a known certificate.
 
@@ -153,6 +175,15 @@ class WfRacRegistrationError(WfRacCommandError):
     an unrelated reason (result 2 is also its catch-all - see RESULT_CODES).
     Re-registering is cheap and fixes the first case, so callers do that once
     before giving up.
+    """
+
+
+class WfRacAccountTableFullError(WfRacCommandError):
+    """Raised when registering answers result 2.
+
+    On updateAccountInfo result 2 means the module's four account slots are
+    taken. Nothing frees one except the manufacturer's app, so retrying is
+    pointless.
     """
 
 
@@ -210,6 +241,7 @@ class Repository:
         device_id: str,
         method: str | None = None,
         cert_path: str | None = None,
+        time_zone: str | None = None,
     ) -> None:
         self._hostname = hostname
         self._port = port
@@ -240,6 +272,9 @@ class Repository:
         # concurrent callers (a plain timestamp check allowed a race where two
         # requests both see the wait as satisfied and fire back-to-back).
         self._request_lock = asyncio.Lock()
+        self._parser = RacParser()
+        # Needed to register again on its own (see async_send_command).
+        self._time_zone = time_zone
 
     @property
     def method(self) -> str | None:
@@ -261,9 +296,7 @@ class Repository:
 
             if cert_exists:
                 _LOGGER.debug("Certificate file found, creating secure SSL context")
-                partial_func = functools.partial(
-                    ssl.create_default_context, cafile=self._cert_path
-                )
+                partial_func = functools.partial(ssl.create_default_context, cafile=self._cert_path)
                 ssl_context = await asyncio.to_thread(partial_func)
                 ssl_context.check_hostname = False
             else:
@@ -304,12 +337,20 @@ class Repository:
                 f"({ex}): {self._redact_text(_printable(raw))}"
             ) from ex
         try:
-            return cast(dict[str, Any], json.loads(text))
+            parsed = json.loads(text)
         except json.JSONDecodeError as ex:
             raise WfRacMalformedResponseError(
                 f"Aircon answered {command!r} with a body that is not JSON "
                 f"({ex}): {self._redact_text(text)}"
             ) from ex
+        # Valid JSON of another shape (null, a list, a bare string) would
+        # otherwise surface as an AttributeError from the first .get().
+        if not isinstance(parsed, dict):
+            raise WfRacMalformedResponseError(
+                f"Aircon answered {command!r} with JSON that is not an object: "
+                f"{self._redact_text(text)}"
+            )
+        return cast(dict[str, Any], parsed)
 
     async def _post(
         self,
@@ -384,63 +425,53 @@ class Repository:
                 await asyncio.sleep(wait_for)
 
             try:
-                # If we already know how to communicate with the unit, proceed
-                if self._method in ("http", "https"):
-                    try:
-                        json_response = await _execute_request(self._method)
-                    except (WfRacCommandError, WfRacMalformedResponseError):
-                        # The unit answered, so the stored method is still the
-                        # right one - it just refused this particular command, or
-                        # garbled the answer to it. Discarding the method here
-                        # would cost every later request an extra discovery round
-                        # trip for nothing.
-                        raise
-                    except WfRacConnectionError:
-                        # A transport outage may mean either that the unit is down
-                        # or that its firmware now uses the other protocol. Clear
-                        # the active method so rediscovery remains possible, while
-                        # retaining it as the preferred first attempt below. This
-                        # lets an unchanged HTTPS unit recover without getting
-                        # stuck on an HTTP-first discovery attempt.
-                        self._preferred_method = self._method
-                        self._method = None
-                        raise
-
-                # If we haven't yet determined if https is required, find out
-                else:
+                stored = self._method is not None
+                first = self._method or self._preferred_method
+                methods: tuple[str, ...] = (first,) if first else ()
+                methods += tuple(method for method in ("http", "https") if method not in methods)
+                if not stored:
                     _LOGGER.debug("No stored method; attempting discovery...")
-                    methods: tuple[str, ...] = (
-                        (self._preferred_method,)
-                        if self._preferred_method in ("http", "https")
-                        else ()
-                    )
-                    methods += tuple(
-                        method for method in ("http", "https") if method not in methods
-                    )
 
-                    # Fall back on any API error, command errors included: a unit
-                    # can answer the wrong protocol with a status code rather than
-                    # dropping the connection, which still means "try the other
-                    # one".
-                    for index, method in enumerate(methods):
-                        try:
-                            json_response = await _execute_request(method)
-                        except WfRacError:
-                            if index == len(methods) - 1:
-                                raise
-                            _LOGGER.debug(
-                                "%s failed, trying %s",
-                                method.upper(),
-                                methods[index + 1].upper(),
-                            )
-                            continue
-
-                        _LOGGER.info(
-                            "Discovered working communication method: %s", method.upper()
+                # Any API error moves on to the other protocol, command errors
+                # included: a unit can answer the wrong protocol with a status
+                # code rather than dropping the connection. The exception is a
+                # stored method that got an answer - it proved itself, so a
+                # refusal or a garbled body is the unit's problem, and trying
+                # the other protocol would only cost an extra round trip.
+                first_error: WfRacError | None = None
+                for index, method in enumerate(methods):
+                    try:
+                        json_response = await _execute_request(method)
+                    except WfRacError as ex:
+                        answered = isinstance(ex, (WfRacCommandError, WfRacMalformedResponseError))
+                        if stored and index == 0 and answered:
+                            raise
+                        first_error = first_error or ex
+                        if index == len(methods) - 1:
+                            if stored:
+                                # Keep the failed method as the first one to
+                                # try, so an unchanged unit recovers without an
+                                # HTTP-first detour; the first error is the one
+                                # about the method we expected to work.
+                                self._preferred_method = methods[0]
+                                self._method = None
+                                raise first_error
+                            raise
+                        _LOGGER.debug(
+                            "%s failed, trying %s",
+                            method.upper(),
+                            methods[index + 1].upper(),
                         )
-                        self._method = method
-                        self._preferred_method = method
-                        break
+                        # The other protocol is a second connection, rationed
+                        # like any other.
+                        await asyncio.sleep(MIN_TIME_BETWEEN_REQUESTS.total_seconds())
+                        continue
+
+                    if method != self._method:
+                        _LOGGER.info("Discovered working communication method: %s", method.upper())
+                    self._method = method
+                    self._preferred_method = method
+                    break
             finally:
                 # Set on every exit, a failed request included: what the
                 # module rations is connections, not answers, and firing the
@@ -496,8 +527,7 @@ class Repository:
             return
         self._refused_commands[command] = code
         _LOGGER.debug(
-            "Aircon answered %r with result %s (%s) - the request was accepted "
-            "but not carried out",
+            "Aircon answered %r with result %s (%s) - the request was accepted but not carried out",
             command,
             code,
             describe_result(command, code),
@@ -518,9 +548,7 @@ class Repository:
         info = await self.get_info()
         return cast(str, info["airconId"])
 
-    async def update_account_info(
-        self, airco_id: str, time_zone: str
-    ) -> dict[str, Any]:
+    async def update_account_info(self, airco_id: str, time_zone: str) -> dict[str, Any]:
         """Update the account info on the airco (sets to operator id of the device)"""
         contents = {
             "accountId": self._operator_id,
@@ -534,6 +562,49 @@ class Repository:
         """delete the account info on the airco"""
         contents = {"accountId": self._operator_id, "airconId": airco_id}
         return await self._post("deleteAccountInfo", contents)
+
+    async def async_register(self, airco_id: str, time_zone: str) -> None:
+        """Register this operator id with the unit.
+
+        Raises WfRacAccountTableFullError for result 2 and WfRacCommandError
+        for any other refusal the library knows. A code it does not know is
+        logged and let through, since refusing it would leave a unit that
+        answers it unusable. An answer without a readable result is
+        WfRacMalformedResponseError, and transport failures propagate.
+        """
+        self._time_zone = time_zone
+        result = await self.update_account_info(airco_id, time_zone)
+        code = _result_code(result)
+        if code is None:
+            raise WfRacMalformedResponseError(
+                "Aircon answered the registration without a readable result code"
+            )
+        if code == 2:
+            raise WfRacAccountTableFullError(f"Aircon refused the registration: {RESULT_CODES[2]}")
+        if code in RESULT_CODES and code != 0:
+            raise WfRacCommandError(
+                f"Aircon refused the registration with result {code} ({RESULT_CODES[code]})"
+            )
+        if code != 0:
+            # The firmware we can read maps its handler's return value onto
+            # 0/1/2/11/12 only, so this is a branch nobody has reported; the
+            # log line is the evidence.
+            _LOGGER.warning(
+                "Airco [%s] answered the registration with result %s, which is not "
+                "a code this library knows. Continuing. Please report this together "
+                "with the module's firmware version",
+                airco_id,
+                code,
+            )
+
+    async def async_unregister(self, airco_id: str) -> bool:
+        """Release this operator id's account slot; True only on result 0.
+
+        Refusals, the rate limit and unreadable answers all leave the slot
+        where it was and return False. Transport failures propagate.
+        """
+        result = await self.del_account_info(airco_id)
+        return _result_code(result) == 0
 
     async def get_aircon_stats(
         self, airco_id: str | None = None, raw: bool = False
@@ -553,6 +624,132 @@ class Repository:
         result = await self._post("getAirconStat", contents)
         return result if raw else cast(dict[str, Any], result["contents"])
 
+    async def async_get_status(self, airco_id: str) -> AirconStatus:
+        """Read and decode the unit's state, firmware strings and lock deadline.
+
+        Raises only WfRacError subclasses:
+        - WfRacConnectionError: nothing usable arrived (transport failure).
+        - WfRacCommandError: HTTP error status, or any non-zero result
+          without state (result 1: no fresh data from the bridge MCU).
+
+        Reads are not account-checked by the module, so an unregistered
+        client can still read and a poll never means "evicted" - registration
+        problems surface only on setAirconStat.
+        - WfRacMalformedResponseError: the answer is not an object, or its
+          airconStat is missing or cannot be decoded. A subclass of
+          WfRacConnectionError.
+        """
+        response = await self._post("getAirconStat", {"airconId": airco_id})
+        contents = response.get("contents")
+        stat = contents.get("airconStat") if isinstance(contents, dict) else None
+        if not isinstance(contents, dict) or not isinstance(stat, str):
+            code = _result_code(response)
+            if code:
+                raise WfRacCommandError(
+                    f"Aircon answered getAirconStat with result {code} "
+                    f"({describe_result('getAirconStat', code)}) and no state"
+                )
+            raise WfRacMalformedResponseError(
+                "Aircon answered getAirconStat without a usable airconStat"
+            )
+        try:
+            aircon = self._parser.translate_bytes(stat)
+        except ValueError as ex:
+            raise WfRacMalformedResponseError(
+                f"Aircon answered getAirconStat with an undecodable airconStat: {ex}"
+            ) from ex
+        expires = contents.get("expires")
+        return AirconStatus(
+            aircon=aircon,
+            firmware=FirmwareInfo.from_contents(contents),
+            expires=expires if type(expires) is int else None,
+        )
+
+    async def async_send_command(
+        self, airco_id: str, base: Aircon, params: Mapping[AirconCommands, Any]
+    ) -> Aircon:
+        """Apply `params` on top of `base` and return the state the unit reports.
+
+        Every frame is a full state block, so `base` must be the latest state
+        the caller has. Raises only WfRacError subclasses, except ValueError
+        for a value that has no encoding.
+
+        - WfRacWriteRefusedError: another client holds the 60 s write lock.
+          The status answer carries that client's state and the deadline, so
+          this waits for the lapse, re-encodes from the fresh state and tries
+          once more.
+        - WfRacRegistrationError: registers (needs the time zone from the
+          constructor or an earlier async_register) and tries once more with
+          the same frame.
+        - Any other non-zero result the library knows is WfRacCommandError.
+        """
+        frame = self._encode_command(base, params)
+        try:
+            return await self._async_set_state(airco_id, frame)
+        except WfRacWriteRefusedError:
+            fresh = base
+            delay = WRITE_LOCK_RETRY_DELAY.total_seconds()
+            try:
+                status = await self.async_get_status(airco_id)
+            except WfRacError:
+                pass
+            else:
+                fresh = status.aircon
+                if status.expires is not None:
+                    # Whole seconds, refused while `expires` still equals the
+                    # current one, so land past the lapse. Epoch: a naive
+                    # datetime is out when DST ends.
+                    remaining = status.expires - time.time() + 1
+                    delay = max(0.0, min(remaining, WRITE_LOCK_MAX_WAIT.total_seconds()))
+            await asyncio.sleep(delay)
+            # A frame built before the refusal would revert what the other
+            # client wrote.
+            return await self._async_set_state(airco_id, self._encode_command(fresh, params))
+        except WfRacRegistrationError:
+            # Result 2 can also be a transient MCU exchange failure; the single
+            # retry covers that as well.
+            if self._time_zone is None:
+                raise
+            await self.async_register(airco_id, self._time_zone)
+            return await self._async_set_state(airco_id, frame)
+
+    def _encode_command(self, base: Aircon, params: Mapping[AirconCommands, Any]) -> str:
+        stat = AirconStat.from_aircon(base)
+        for key, value in params.items():
+            setattr(stat, key, value)
+        return self._parser.to_base64(stat)
+
+    async def _async_set_state(self, airco_id: str, frame: str) -> Aircon:
+        result = await self._post("setAirconStat", {"airconId": airco_id, "airconStat": frame})
+        code = _result_code(result)
+        if code in WRITE_REFUSED_CODES:
+            raise WfRacWriteRefusedError(
+                f"Aircon refused setAirconStat with result {code} "
+                f"({describe_result('setAirconStat', code)})"
+            )
+        if code == 2:
+            raise WfRacRegistrationError(
+                f"Aircon refused setAirconStat with result {code} "
+                f"({describe_result('setAirconStat', code)})"
+            )
+        if code and code in RESULT_CODES:
+            raise WfRacCommandError(
+                f"Aircon refused setAirconStat with result {code} "
+                f"({describe_result('setAirconStat', code)})"
+            )
+        contents = result.get("contents")
+        stat = contents.get("airconStat") if isinstance(contents, dict) else None
+        if not isinstance(stat, str):
+            raise WfRacMalformedResponseError(
+                "Aircon answered setAirconStat without a usable airconStat"
+            )
+        try:
+            return self._parser.translate_bytes(stat)
+        except ValueError as ex:
+            raise WfRacMalformedResponseError(
+                f"Aircon answered setAirconStat with an undecodable airconStat: {ex}"
+            ) from ex
+
     async def send_airco_command(
         self, airco_id: str, command: str, *, timestamp_offset: int = 0
     ) -> str:
@@ -564,9 +761,7 @@ class Repository:
         operation-data requests - see Device.SERVICE_DATA_STAMP_BACKDATE.
         """
         contents = {"airconId": airco_id, "airconStat": command}
-        result = await self._post(
-            "setAirconStat", contents, timestamp_offset=timestamp_offset
-        )
+        result = await self._post("setAirconStat", contents, timestamp_offset=timestamp_offset)
         try:
             code = int(result.get("result", 0))
         except (TypeError, ValueError):

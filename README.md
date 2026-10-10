@@ -27,7 +27,8 @@ pip install pywfrac
 
 ```python
 import aiohttp
-from pywfrac import Repository
+from pywfrac import AirconCommands, Repository
+
 
 async def main() -> None:
     async with aiohttp.ClientSession() as session:
@@ -39,19 +40,39 @@ async def main() -> None:
             device_id="my-device-id",
         )
         airco_id = await repo.get_airco_id()
-        await repo.update_account_info(airco_id, time_zone="Europe/Berlin")
-        stats = await repo.get_aircon_stats(airco_id)
+        await repo.async_register(airco_id, "Europe/Berlin")
+        status = await repo.async_get_status(airco_id)
+        print(status.aircon.PresetTemp, status.firmware, status.expires)
+
+        # Changed fields on top of the last known state; waits out another
+        # client's write lock and re-registers on its own.
+        aircon = await repo.async_send_command(
+            airco_id, status.aircon, {AirconCommands.PresetTemp: 22.0}
+        )
 ```
+
+`async_get_status`, `async_register`, `async_unregister` and
+`async_send_command` raise only `WfRacError` subclasses
+(`WfRacConnectionError`, `WfRacMalformedResponseError`,
+`WfRacRegistrationError`, `WfRacAccountTableFullError`,
+`WfRacCommandError`, `WfRacWriteRefusedError`). The older
+`get_aircon_stats`, `update_account_info` and `send_airco_command` return the
+module's answer unchanged and stay available.
 
 `Repository` discovers whether the module speaks plain HTTP or HTTPS on the
 first request and remembers the result; construct it with `method="http"` or
 `method="https"` to skip discovery if you already know. Pass `cert_path` to
 use a captured module certificate instead of the permissive fallback context
-— see `Repository._get_ssl_context` for how to capture one.
+— see `Repository._get_ssl_context` for how to capture one. A stored method
+that stops answering is retried on the other protocol within the same call.
+Pass `time_zone` to let `async_send_command` register again by itself.
 
 `RacParser` turns a raw `getAirconStat` response into an `Aircon`/`AirconStat`
 object and back; see the protocol reference linked below for the field
-layout.
+layout. `ModelCapabilities.setpoint_range(mode)` gives the setpoint limits for
+a mode. `Aircon.operation_mode`, `air_flow`, `wind_direction_ud` and
+`wind_direction_lr` give the raw fields as enums, or `None` where the unit sent
+a value without a member (e.g. an unknown airflow).
 
 ## Protocol reference
 

@@ -12,6 +12,7 @@ from .capabilities import ModelCapabilities, get_capabilities
 from .enums import AirFlow, OperationMode, WindDirectionLR, WindDirectionUD
 from .error_codes import describe_error_code
 from .models.aircon import Aircon, AirconCommands, AirconStat, HomeLeaveModeSetting
+from .models.status import AirconStatus, FirmwareInfo
 from .parser import (
     AIRFLOW_UNKNOWN,
     EXTERNAL_TEMPERATURE_MAX,
@@ -27,7 +28,10 @@ from .repository import (
     READ_RESULT_CODES,
     REQUEST_TIMEOUT,
     RESULT_CODES,
+    WRITE_LOCK_MAX_WAIT,
+    WRITE_LOCK_RETRY_DELAY,
     Repository,
+    WfRacAccountTableFullError,
     WfRacCommandError,
     WfRacConnectionError,
     WfRacError,
@@ -40,6 +44,7 @@ from .repository import (
 __all__ = [
     "Repository",
     "WfRacError",
+    "WfRacAccountTableFullError",
     "WfRacCommandError",
     "WfRacRegistrationError",
     "WfRacWriteRefusedError",
@@ -62,7 +67,11 @@ __all__ = [
     "SERVICE_DATA_SILENT_OPERATION",
     "MIN_TIME_BETWEEN_REQUESTS",
     "REQUEST_TIMEOUT",
+    "WRITE_LOCK_MAX_WAIT",
+    "WRITE_LOCK_RETRY_DELAY",
     "Aircon",
+    "AirconStatus",
+    "FirmwareInfo",
     "AirconStat",
     "AirconCommands",
     "HomeLeaveModeSetting",

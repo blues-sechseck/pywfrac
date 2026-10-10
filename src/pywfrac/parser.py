@@ -203,8 +203,11 @@ def _airflow_mask(masks: dict[int, int], air_flow: int) -> int:
     except KeyError:
         raise ValueError(
             f"no encoding for AirFlow {air_flow}"
-            + (" (the unit reported a fan step this library cannot read)"
-               if air_flow == AIRFLOW_UNKNOWN else "")
+            + (
+                " (the unit reported a fan step this library cannot read)"
+                if air_flow == AIRFLOW_UNKNOWN
+                else ""
+            )
         ) from None
 
 
@@ -247,9 +250,7 @@ def _segment_bytes(vals: list[int], i: int) -> tuple[int, int, int]:
     return (vals[i + 1] & 0xFF, vals[i + 2] & 0xFF, vals[i + 3] & 0xFF)
 
 
-def _log_status_request(
-    stat_byte: bytearray, carries_state: bool, operation: bool
-) -> None:
+def _log_status_request(stat_byte: bytearray, carries_state: bool, operation: bool) -> None:
     """What the status request actually contains.
 
     Worth logging in full: whether a module applies a frame it was not asked
@@ -455,8 +456,7 @@ class RacParser:
             # OP1=255 means "report the current value" - never 0, which in
             # this trailer would be a write to the climate MCU.
             segments = [
-                (code, 255, 255, 255)
-                for code in sorted(aircon_stat.ServiceDataStatusRequest)
+                (code, 255, 255, 255) for code in sorted(aircon_stat.ServiceDataStatusRequest)
             ]
             return cls._build_trailer(segments)
 
@@ -501,9 +501,7 @@ class RacParser:
         # Off and fan_only do not regulate temperature, so leaving byte 5 at 0xFF
         # (internal sensor) is correct for those modes.
         if self._should_encode_external_temperature(aircon_stat):
-            raw_temperature = self.encode_external_temperature(
-                aircon_stat.ExternalTemperature
-            )
+            raw_temperature = self.encode_external_temperature(aircon_stat.ExternalTemperature)
             if raw_temperature is not None:
                 stat_byte[5] = raw_temperature
         _log_status_request(stat_byte, False, aircon_stat.Operation)
@@ -547,9 +545,7 @@ class RacParser:
         # could interfere with other frame features (see
         # _should_encode_external_temperature).
         if self._should_encode_external_temperature(aircon_stat):
-            raw_temperature = self.encode_external_temperature(
-                aircon_stat.ExternalTemperature
-            )
+            raw_temperature = self.encode_external_temperature(aircon_stat.ExternalTemperature)
             if raw_temperature is not None:
                 stat_byte[5] = raw_temperature
 
@@ -639,10 +635,10 @@ class RacParser:
             signed_array = [(256 - a) * (-1) if a > 127 else a for a in content_byte_array]
 
             start_length = signed_array[18] * 4 + 21
-            content = signed_array[start_length:start_length + 18]
+            content = signed_array[start_length : start_length + 18]
 
             self._parse_basic_settings(ac_device, content)
-            self._parse_temperatures(ac_device, signed_array[start_length + 19:-2])
+            self._parse_temperatures(ac_device, signed_array[start_length + 19 : -2])
 
             return ac_device
         except Exception as e:
@@ -656,9 +652,7 @@ class RacParser:
         air_flow = find_match(15 & content[3], 7, 0, 1, 2, 6)
         ac_device.AirFlow = AIRFLOW_UNKNOWN if air_flow < 0 else air_flow
         ac_device.WindDirectionUD = (
-            0
-            if content[2] & 192 == 64
-            else find_match(240 & content[3], 0, 16, 32, 48) + 1
+            0 if content[2] & 192 == 64 else find_match(240 & content[3], 0, 16, 32, 48) + 1
         )
         # content[12] is only a device state on units that speak the extended
         # WF-RAC bus protocol. On the legacy one the module overwrites the byte
@@ -667,9 +661,7 @@ class RacParser:
         # unaffected - do not confirm a horizontal-vane command by re-reading
         # it. See docs/wf-rac-module-reference.md section 6.7.
         ac_device.WindDirectionLR = (
-            0
-            if content[12] & 3 == 1
-            else find_match(31 & content[11], 0, 1, 2, 3, 4, 5, 6) + 1
+            0 if content[12] & 3 == 1 else find_match(31 & content[11], 0, 1, 2, 3, 4, 5, 6) + 1
         )
         ac_device.Entrust = 4 == (12 & content[12])
         ac_device.CoolHotJudge = (content[8] & 8) <= 0
@@ -715,11 +707,7 @@ class RacParser:
             ac_device.IsSelfCleanOperation = (content[15] & 1) != 0
         code = content[6] & 127
         ac_device.ErrorCode = (
-            f"M{code:02d}"
-            if content[6] < 0
-            else "00"
-            if code == 0
-            else "E" + str(code)
+            f"M{code:02d}" if content[6] < 0 else "00" if code == 0 else "E" + str(code)
         )
 
     def _parse_temperatures(self, ac_device: Aircon, vals: list[int]) -> None:
@@ -738,10 +726,9 @@ class RacParser:
                 else:
                     self._log_unknown_segment(vals, i)
             elif vals[i] == -108 and vals[i + 1] == 16:
-                ac_device.Electric = self._calculate_electric(vals[i + 2:i + 4])
+                ac_device.Electric = self._calculate_electric(vals[i + 2 : i + 4])
             elif (
-                vals[i] == HOME_LEAVE_MODE_TAG_SIGNED
-                and vals[i + 1] == HOME_LEAVE_MODE_READ_MARKER
+                vals[i] == HOME_LEAVE_MODE_TAG_SIGNED and vals[i + 1] == HOME_LEAVE_MODE_READ_MARKER
             ):
                 home_leave_mode_raw[vals[i + 2] & 0xFF] = vals[i + 3] & 0xFF
             elif (vals[i] & 0xFF) in SERVICE_DATA_CODES:
@@ -851,9 +838,7 @@ class RacParser:
             )
             return None
         resistance = COIL_SERIES_RESISTOR * (COIL_ADC_GAIN / op2 - 1.0)
-        inverse_kelvin = (
-            math.log(resistance / COIL_THERMISTOR_R25) / COIL_THERMISTOR_B + 1 / 298.15
-        )
+        inverse_kelvin = math.log(resistance / COIL_THERMISTOR_R25) / COIL_THERMISTOR_B + 1 / 298.15
         return round(1 / inverse_kelvin - 273.15, 1)
 
     @staticmethod
@@ -863,7 +848,7 @@ class RacParser:
             "Unknown airconStat segment: tag=%s sub=%s data=%s",
             vals[i],
             vals[i + 1],
-            vals[i + 2:i + 4],
+            vals[i + 2 : i + 4],
         )
 
     @staticmethod
