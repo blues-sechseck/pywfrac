@@ -17,7 +17,7 @@ from base64 import b64decode
 
 import pytest
 
-from pywfrac import AIRFLOW_UNKNOWN
+from pywfrac import AIRFLOW_UNKNOWN, defrost_possible
 from pywfrac.models.aircon import (
     Aircon,
     AirconStat,
@@ -1063,3 +1063,23 @@ def test_command_to_byte_external_temperature_out_of_range_raises(parser):
         parser.command_to_byte(
             _base_stat(Operation=True, OperationMode=1, ExternalTemperature=100.0)
         )
+
+
+@pytest.mark.parametrize(
+    ("frequency", "outdoor", "expected"),
+    [
+        (40.0, 3.0, True),
+        (40.0, 7.5, True),
+        (40.0, 8.0, False),
+        (40.0, 20.0, False),
+        (0.0, 3.0, False),
+        (None, 3.0, False),
+    ],
+)
+def test_defrost_possible(frequency, outdoor, expected):
+    ac = Aircon(CompressorFrequency=frequency, OutdoorTemp=outdoor)
+    assert defrost_possible(ac) is expected
+
+
+def test_defrost_possible_without_a_reading():
+    assert defrost_possible(None) is False

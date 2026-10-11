@@ -89,6 +89,11 @@ HUMIDITY_UNKNOWN_BYTES: Final = (0, 30, 0xFF)
 # (not seen yet). Being an outdoor-unit value it holds for an idle indoor unit
 # on a multi-split as well.
 SERVICE_DATA_DEFROST: Final = 0x0C
+# A defrost needs a cold outdoor coil after a long heating run, which the
+# service manual puts at a coil temperature below freezing. The outdoor air is
+# what we can see; 8 degrees C is a generous margin above that, so a defrost is
+# never ruled out while it could still happen.
+DEFROST_OUTDOOR_TEMP_MAX: Final = 8.0
 SERVICE_DATA_CODES: Final = (
     SERVICE_DATA_COMPRESSOR_FREQ,
     SERVICE_DATA_OPERATING_CURRENT,
@@ -249,6 +254,18 @@ _EXTERNAL_TEMPERATURE_RAW_MIN: Final = 0x10
 _EXTERNAL_TEMPERATURE_RAW_MAX: Final = 0xFE
 EXTERNAL_TEMPERATURE_MIN: Final = indoorTempList[_EXTERNAL_TEMPERATURE_RAW_MIN]
 EXTERNAL_TEMPERATURE_MAX: Final = indoorTempList[_EXTERNAL_TEMPERATURE_RAW_MAX]
+
+
+def defrost_possible(airco: Aircon | None) -> bool:
+    """Whether the outdoor unit can be defrosting right now.
+
+    Needs the compressor running (0x11 above zero) and outdoor air below
+    DEFROST_OUTDOOR_TEMP_MAX. False while the compressor reading is missing,
+    so a reading that is not there never counts as a reason to ask.
+    """
+    if airco is None or airco.CompressorFrequency is None:
+        return False
+    return airco.CompressorFrequency > 0 and airco.OutdoorTemp < DEFROST_OUTDOOR_TEMP_MAX
 
 
 def is_external_temperature_mode(operation: bool, operation_mode: int) -> bool:

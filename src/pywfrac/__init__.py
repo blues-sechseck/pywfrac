@@ -15,6 +15,7 @@ from .models.aircon import Aircon, AirconCommands, AirconStat, HomeLeaveModeSett
 from .models.status import AirconStatus, FirmwareInfo
 from .parser import (
     AIRFLOW_UNKNOWN,
+    DEFROST_OUTDOOR_TEMP_MAX,
     EXTERNAL_TEMPERATURE_MAX,
     EXTERNAL_TEMPERATURE_MIN,
     SERVICE_DATA_CODE_BY_FIELD,
@@ -32,6 +33,7 @@ from .parser import (
     SERVICE_DATA_PROTECTION_RAW,
     SERVICE_DATA_SILENT_OPERATION,
     RacParser,
+    defrost_possible,
 )
 from .repository import (
     MIN_TIME_BETWEEN_REQUESTS,
@@ -78,6 +80,8 @@ __all__ = [
     "EXTERNAL_TEMPERATURE_MIN",
     "EXTERNAL_TEMPERATURE_MAX",
     "SERVICE_DATA_CODES",
+    "DEFROST_OUTDOOR_TEMP_MAX",
+    "defrost_possible",
     "SERVICE_DATA_BUDGET",
     "SERVICE_DATA_REFUSALS_TO_SUSPEND",
     "CodeState",
