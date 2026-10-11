@@ -17,8 +17,8 @@ from .parser import (
     AIRFLOW_UNKNOWN,
     EXTERNAL_TEMPERATURE_MAX,
     EXTERNAL_TEMPERATURE_MIN,
-    SERVICE_DATA_CODES,
     SERVICE_DATA_CODE_BY_FIELD,
+    SERVICE_DATA_CODES,
     SERVICE_DATA_COMPRESSOR_FREQ,
     SERVICE_DATA_DEFROST,
     SERVICE_DATA_DISCHARGE_SUPERHEAT_RAW,
@@ -50,6 +50,12 @@ from .repository import (
     WfRacWriteRefusedError,
     describe_result,
 )
+from .service_data import (
+    SERVICE_DATA_BUDGET,
+    SERVICE_DATA_REFUSALS_TO_SUSPEND,
+    CodeState,
+    ServiceDataRefusals,
+)
 
 __all__ = [
     "Repository",
@@ -72,6 +78,10 @@ __all__ = [
     "EXTERNAL_TEMPERATURE_MIN",
     "EXTERNAL_TEMPERATURE_MAX",
     "SERVICE_DATA_CODES",
+    "SERVICE_DATA_BUDGET",
+    "SERVICE_DATA_REFUSALS_TO_SUSPEND",
+    "CodeState",
+    "ServiceDataRefusals",
     "SERVICE_DATA_CODE_BY_FIELD",
     "SERVICE_DATA_INDOOR_COIL_RAW",
     "SERVICE_DATA_SILENT_OPERATION",
