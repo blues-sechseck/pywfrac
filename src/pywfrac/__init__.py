@@ -9,19 +9,31 @@ remains the reference for the protocol's field notes.
 """
 
 from .capabilities import ModelCapabilities, get_capabilities
-from .enums import AirFlow, OperationMode, WindDirectionLR, WindDirectionUD
+from .enums import AirFlow, OperationMode, ProtectionState, WindDirectionLR, WindDirectionUD
 from .error_codes import describe_error_code
 from .models.aircon import Aircon, AirconCommands, AirconStat, HomeLeaveModeSetting
 from .models.status import AirconStatus, FirmwareInfo
 from .parser import (
     AIRFLOW_UNKNOWN,
+    DEFROST_OUTDOOR_TEMP_MAX,
     EXTERNAL_TEMPERATURE_MAX,
     EXTERNAL_TEMPERATURE_MIN,
     SERVICE_DATA_CODE_BY_FIELD,
     SERVICE_DATA_CODES,
+    SERVICE_DATA_COMPRESSOR_FREQ,
+    SERVICE_DATA_DEFROST,
+    SERVICE_DATA_DISCHARGE_SUPERHEAT_RAW,
+    SERVICE_DATA_EEV_PULSES,
+    SERVICE_DATA_HOT_GAS_TEMP,
+    SERVICE_DATA_HUMIDITY,
+    SERVICE_DATA_INDOOR_COIL_OUTLET_RAW,
     SERVICE_DATA_INDOOR_COIL_RAW,
+    SERVICE_DATA_OPERATING_CURRENT,
+    SERVICE_DATA_OUTDOOR_COIL_RAW,
+    SERVICE_DATA_PROTECTION_RAW,
     SERVICE_DATA_SILENT_OPERATION,
     RacParser,
+    defrost_possible,
 )
 from .repository import (
     MIN_TIME_BETWEEN_REQUESTS,
@@ -40,6 +52,12 @@ from .repository import (
     WfRacWriteRefusedError,
     describe_result,
 )
+from .service_data import (
+    SERVICE_DATA_BUDGET,
+    SERVICE_DATA_REFUSALS_TO_SUSPEND,
+    CodeState,
+    ServiceDataRefusals,
+)
 
 __all__ = [
     "Repository",
@@ -56,15 +74,32 @@ __all__ = [
     "RacParser",
     "AIRFLOW_UNKNOWN",
     "OperationMode",
+    "ProtectionState",
     "AirFlow",
     "WindDirectionUD",
     "WindDirectionLR",
     "EXTERNAL_TEMPERATURE_MIN",
     "EXTERNAL_TEMPERATURE_MAX",
     "SERVICE_DATA_CODES",
+    "DEFROST_OUTDOOR_TEMP_MAX",
+    "defrost_possible",
+    "SERVICE_DATA_BUDGET",
+    "SERVICE_DATA_REFUSALS_TO_SUSPEND",
+    "CodeState",
+    "ServiceDataRefusals",
     "SERVICE_DATA_CODE_BY_FIELD",
     "SERVICE_DATA_INDOOR_COIL_RAW",
     "SERVICE_DATA_SILENT_OPERATION",
+    "SERVICE_DATA_COMPRESSOR_FREQ",
+    "SERVICE_DATA_DEFROST",
+    "SERVICE_DATA_DISCHARGE_SUPERHEAT_RAW",
+    "SERVICE_DATA_EEV_PULSES",
+    "SERVICE_DATA_HOT_GAS_TEMP",
+    "SERVICE_DATA_HUMIDITY",
+    "SERVICE_DATA_INDOOR_COIL_OUTLET_RAW",
+    "SERVICE_DATA_OPERATING_CURRENT",
+    "SERVICE_DATA_OUTDOOR_COIL_RAW",
+    "SERVICE_DATA_PROTECTION_RAW",
     "MIN_TIME_BETWEEN_REQUESTS",
     "REQUEST_TIMEOUT",
     "WRITE_LOCK_MAX_WAIT",

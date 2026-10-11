@@ -6,6 +6,7 @@ from base64 import b64decode, b64encode
 from typing import Final
 
 from .capabilities import get_capabilities
+from .enums import ProtectionState
 from .models.aircon import Aircon, AirconStat, HomeLeaveModeSetting
 from .utils import find_match, indoorTempList, outdoorTempList
 
@@ -84,6 +85,16 @@ SILENT_OPERATION_WRITE_CODE: Final = 0x21
 # service manuals give for a broken sensor wire.
 SERVICE_DATA_HUMIDITY: Final = 0xAD
 HUMIDITY_UNKNOWN_BYTES: Final = (0, 30, 0xFF)
+# Defrost flag of the outdoor unit. The value is the low nibble of op1 behind
+# the answer class 1: 0x10 = not defrosting (seen on hardware), 0x11 = defrosting
+# (not seen yet). Being an outdoor-unit value it holds for an idle indoor unit
+# on a multi-split as well.
+SERVICE_DATA_DEFROST: Final = 0x0C
+# A defrost needs a cold outdoor coil after a long heating run, which the
+# service manual puts at a coil temperature below freezing. The outdoor air is
+# what we can see; 8 degrees C is a generous margin above that, so a defrost is
+# never ruled out while it could still happen.
+DEFROST_OUTDOOR_TEMP_MAX: Final = 8.0
 SERVICE_DATA_CODES: Final = (
     SERVICE_DATA_COMPRESSOR_FREQ,
     SERVICE_DATA_OPERATING_CURRENT,
@@ -96,6 +107,7 @@ SERVICE_DATA_CODES: Final = (
     SERVICE_DATA_PROTECTION_RAW,
     SERVICE_DATA_SILENT_OPERATION,
     SERVICE_DATA_HUMIDITY,
+    SERVICE_DATA_DEFROST,
 )
 SERVICE_DATA_CODE_BY_FIELD: Final = {
     "CompressorFrequency": SERVICE_DATA_COMPRESSOR_FREQ,
@@ -113,9 +125,12 @@ SERVICE_DATA_CODE_BY_FIELD: Final = {
     "OutdoorCoilRaw": SERVICE_DATA_OUTDOOR_COIL_RAW,
     "DischargeSuperheatRaw": SERVICE_DATA_DISCHARGE_SUPERHEAT_RAW,
     "ProtectionRaw": SERVICE_DATA_PROTECTION_RAW,
+    "Protection": SERVICE_DATA_PROTECTION_RAW,
     "SilentOperation": SERVICE_DATA_SILENT_OPERATION,
     "IndoorHumidity": SERVICE_DATA_HUMIDITY,
     "IndoorHumidityRaw": SERVICE_DATA_HUMIDITY,
+    "Defrosting": SERVICE_DATA_DEFROST,
+    "DefrostingRaw": SERVICE_DATA_DEFROST,
 }
 
 # The coil thermistor is the same part as the two air sensors - MHI's manuals
@@ -241,6 +256,25 @@ _EXTERNAL_TEMPERATURE_RAW_MIN: Final = 0x10
 _EXTERNAL_TEMPERATURE_RAW_MAX: Final = 0xFE
 EXTERNAL_TEMPERATURE_MIN: Final = indoorTempList[_EXTERNAL_TEMPERATURE_RAW_MIN]
 EXTERNAL_TEMPERATURE_MAX: Final = indoorTempList[_EXTERNAL_TEMPERATURE_RAW_MAX]
+
+
+def _protection_state(number: int) -> ProtectionState | None:
+    try:
+        return ProtectionState(number)
+    except ValueError:
+        return None
+
+
+def defrost_possible(airco: Aircon | None) -> bool:
+    """Whether the outdoor unit can be defrosting right now.
+
+    Needs the compressor running (0x11 above zero) and outdoor air below
+    DEFROST_OUTDOOR_TEMP_MAX. False while the compressor reading is missing,
+    so a reading that is not there never counts as a reason to ask.
+    """
+    if airco is None or airco.CompressorFrequency is None:
+        return False
+    return airco.CompressorFrequency > 0 and airco.OutdoorTemp < DEFROST_OUTDOOR_TEMP_MAX
 
 
 def is_external_temperature_mode(operation: bool, operation_mode: int) -> bool:
@@ -801,9 +835,13 @@ class RacParser:
             ac_device.DischargeSuperheatRaw = op2
         elif code == SERVICE_DATA_PROTECTION_RAW:
             ac_device.ProtectionRaw = op2
+            ac_device.Protection = _protection_state(op2)
         elif code == SERVICE_DATA_HUMIDITY:
             ac_device.IndoorHumidityRaw = op2
             ac_device.IndoorHumidity = None if op2 in HUMIDITY_UNKNOWN_BYTES else op2
+        elif code == SERVICE_DATA_DEFROST:
+            ac_device.DefrostingRaw = op1
+            ac_device.Defrosting = {0x10: False, 0x11: True}.get(op1)
         elif code == SERVICE_DATA_SILENT_OPERATION and op1 == SILENT_OPERATION_SELECTOR:
             ac_device.SilentOperation = bool(op2 & SILENT_OPERATION_BIT)
 

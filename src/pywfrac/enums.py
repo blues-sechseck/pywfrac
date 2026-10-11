@@ -59,3 +59,32 @@ class WindDirectionLR(IntEnum):
     POSITION_5 = 5
     POSITION_6 = 6
     POSITION_7 = 7
+
+
+class ProtectionState(IntEnum):
+    """Operation-data 0x7C, "Protection State No. of The Compressor".
+
+    MHI's service manuals show the lowest number whose protection is running.
+    The table has no 13. A *_CONTROL member is a protective control working,
+    a *_FAULT, *_OVERTEMP or *_STOP one is the unit stopping. A unit has been
+    seen answering 0 under every condition tried, so a 0 proves nothing.
+    """
+
+    NORMAL = 0
+    DISCHARGE_TEMP_CONTROL = 1
+    DISCHARGE_TEMP_FAULT = 2
+    CURRENT_SAFE_PRIMARY = 3
+    HIGH_PRESSURE_CONTROL = 4
+    HIGH_PRESSURE_FAULT = 5
+    LOW_PRESSURE_CONTROL = 6
+    LOW_PRESSURE_FAULT = 7
+    FROST_PROTECTION = 8
+    CURRENT_CUT = 9
+    POWER_TRANSISTOR_CONTROL = 10
+    POWER_TRANSISTOR_OVERTEMP = 11
+    COMPRESSION_RATIO_CONTROL = 12
+    CONDENSATION_PROTECTION = 14
+    CURRENT_SAFE_SECONDARY = 15
+    ROTOR_LOCK_STOP = 16
+    STARTUP_FAILURE_STOP = 17
+    ACTIVE_FILTER_FAULT = 18
