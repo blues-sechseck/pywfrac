@@ -141,6 +141,8 @@ class Aircon(AirconBase):
     ProtectionRaw: int | None = None  # protection number, answer untested
     # Silent operation (0xDD); None until a read was answered with its selector.
     SilentOperation: bool | None = None
+    IndoorHumidity: int | None = None  # % relative; None for 0 (broken wire), 30 (no sensor), 255
+    IndoorHumidityRaw: int | None = None
     # Every operation-data segment of this frame as (op1, op2, op3), keyed by
     # code - decoded or not. The undecoded ones are what a reader without a
     # formula still gets to look at.
