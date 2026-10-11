@@ -17,7 +17,7 @@ from base64 import b64decode
 
 import pytest
 
-from pywfrac import AIRFLOW_UNKNOWN, defrost_possible
+from pywfrac import AIRFLOW_UNKNOWN, ProtectionState, defrost_possible
 from pywfrac.models.aircon import (
     Aircon,
     AirconStat,
@@ -365,6 +365,7 @@ def test_parse_temperatures_service_data_segments(parser):
     assert ac.OutdoorCoilRaw == 0x43
     assert ac.DischargeSuperheatRaw == 0x0C
     assert ac.ProtectionRaw == 0x03
+    assert ac.Protection is ProtectionState.CURRENT_SAFE_PRIMARY
 
 
 def test_silent_operation_trailer_is_the_write_segment_alone(parser):
@@ -442,6 +443,25 @@ def test_parse_temperatures_defrosting(parser, op1, expected):
     assert ac.DefrostingRaw == op1
 
 
+@pytest.mark.parametrize(
+    ("op2", "expected"),
+    [
+        (0, ProtectionState.NORMAL),
+        (8, ProtectionState.FROST_PROTECTION),
+        (18, ProtectionState.ACTIVE_FILTER_FAULT),
+        # 13 is unassigned in MHI's table; anything past 18 is unknown.
+        (13, None),
+        (19, None),
+        (0xFF, None),
+    ],
+)
+def test_parse_temperatures_protection(parser, op2, expected):
+    ac = Aircon()
+    parser._parse_temperatures(ac, [0x7C, 0x10, op2 - 256 if op2 > 127 else op2, -1])
+    assert ac.Protection is expected
+    assert ac.ProtectionRaw == op2
+
+
 def test_parse_temperatures_keeps_every_operation_data_segment_raw(parser):
     # One decoded code, one nobody has a formula for: both reach ServiceDataRaw.
     ac = Aircon()
@@ -475,6 +495,7 @@ def test_parse_temperatures_service_data_absent_by_default(parser):
     assert ac.OutdoorCoilRaw is None
     assert ac.DischargeSuperheatRaw is None
     assert ac.ProtectionRaw is None
+    assert ac.Protection is None
     assert ac.SilentOperation is None
     assert ac.IndoorHumidity is None
     assert ac.IndoorHumidityRaw is None

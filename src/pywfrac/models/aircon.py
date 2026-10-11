@@ -5,7 +5,7 @@ from enum import IntEnum, StrEnum
 from typing import TypeVar
 
 from ..capabilities import ModelCapabilities, get_capabilities
-from ..enums import AirFlow, OperationMode, WindDirectionLR, WindDirectionUD
+from ..enums import AirFlow, OperationMode, ProtectionState, WindDirectionLR, WindDirectionUD
 
 _E = TypeVar("_E", bound=IntEnum)
 
@@ -139,6 +139,7 @@ class Aircon(AirconBase):
     OutdoorCoilRaw: int | None = None  # THO-R1, shared by one outdoor unit
     DischargeSuperheatRaw: int | None = None  # TDSH
     ProtectionRaw: int | None = None  # protection number, answer untested
+    Protection: ProtectionState | None = None  # None for a number without a member
     # Silent operation (0xDD); None until a read was answered with its selector.
     SilentOperation: bool | None = None
     IndoorHumidity: int | None = None  # % relative; None for 0 (broken wire), 30 (no sensor), 255

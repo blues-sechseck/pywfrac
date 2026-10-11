@@ -6,6 +6,7 @@ from base64 import b64decode, b64encode
 from typing import Final
 
 from .capabilities import get_capabilities
+from .enums import ProtectionState
 from .models.aircon import Aircon, AirconStat, HomeLeaveModeSetting
 from .utils import find_match, indoorTempList, outdoorTempList
 
@@ -124,6 +125,7 @@ SERVICE_DATA_CODE_BY_FIELD: Final = {
     "OutdoorCoilRaw": SERVICE_DATA_OUTDOOR_COIL_RAW,
     "DischargeSuperheatRaw": SERVICE_DATA_DISCHARGE_SUPERHEAT_RAW,
     "ProtectionRaw": SERVICE_DATA_PROTECTION_RAW,
+    "Protection": SERVICE_DATA_PROTECTION_RAW,
     "SilentOperation": SERVICE_DATA_SILENT_OPERATION,
     "IndoorHumidity": SERVICE_DATA_HUMIDITY,
     "IndoorHumidityRaw": SERVICE_DATA_HUMIDITY,
@@ -254,6 +256,13 @@ _EXTERNAL_TEMPERATURE_RAW_MIN: Final = 0x10
 _EXTERNAL_TEMPERATURE_RAW_MAX: Final = 0xFE
 EXTERNAL_TEMPERATURE_MIN: Final = indoorTempList[_EXTERNAL_TEMPERATURE_RAW_MIN]
 EXTERNAL_TEMPERATURE_MAX: Final = indoorTempList[_EXTERNAL_TEMPERATURE_RAW_MAX]
+
+
+def _protection_state(number: int) -> ProtectionState | None:
+    try:
+        return ProtectionState(number)
+    except ValueError:
+        return None
 
 
 def defrost_possible(airco: Aircon | None) -> bool:
@@ -826,6 +835,7 @@ class RacParser:
             ac_device.DischargeSuperheatRaw = op2
         elif code == SERVICE_DATA_PROTECTION_RAW:
             ac_device.ProtectionRaw = op2
+            ac_device.Protection = _protection_state(op2)
         elif code == SERVICE_DATA_HUMIDITY:
             ac_device.IndoorHumidityRaw = op2
             ac_device.IndoorHumidity = None if op2 in HUMIDITY_UNKNOWN_BYTES else op2

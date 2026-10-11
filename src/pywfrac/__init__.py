@@ -9,7 +9,7 @@ remains the reference for the protocol's field notes.
 """
 
 from .capabilities import ModelCapabilities, get_capabilities
-from .enums import AirFlow, OperationMode, WindDirectionLR, WindDirectionUD
+from .enums import AirFlow, OperationMode, ProtectionState, WindDirectionLR, WindDirectionUD
 from .error_codes import describe_error_code
 from .models.aircon import Aircon, AirconCommands, AirconStat, HomeLeaveModeSetting
 from .models.status import AirconStatus, FirmwareInfo
@@ -74,6 +74,7 @@ __all__ = [
     "RacParser",
     "AIRFLOW_UNKNOWN",
     "OperationMode",
+    "ProtectionState",
     "AirFlow",
     "WindDirectionUD",
     "WindDirectionLR",
