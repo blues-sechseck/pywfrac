@@ -403,11 +403,31 @@ def test_parse_temperatures_silent_operation(parser, op1, op2, expected):
     assert ac.SilentOperation is expected
 
 
+@pytest.mark.parametrize(
+    ("op2", "expected"),
+    [
+        (47, 47),
+        (31, 31),
+        (100, 100),
+        # Units without a humidity sensor answer a constant 30.
+        (30, None),
+        # A broken sensor wire reads 0.
+        (0, None),
+        (0xFF, None),
+    ],
+)
+def test_parse_temperatures_humidity(parser, op2, expected):
+    ac = Aircon()
+    parser._parse_temperatures(ac, [0xAD - 256, 0x10, op2 - 256 if op2 > 127 else op2, -1])
+    assert ac.IndoorHumidity == expected
+    assert ac.IndoorHumidityRaw == op2
+
+
 def test_parse_temperatures_keeps_every_operation_data_segment_raw(parser):
     # One decoded code, one nobody has a formula for: both reach ServiceDataRaw.
     ac = Aircon()
-    parser._parse_temperatures(ac, [0x11, 0x10, 0x14, 0, 0xAD - 256, 0x10, 0x1E, -1])
-    assert ac.ServiceDataRaw == {0x11: (0x10, 0x14, 0x00), 0xAD: (0x10, 0x1E, 0xFF)}
+    parser._parse_temperatures(ac, [0x11, 0x10, 0x14, 0, 0xD2 - 256, 0x10, 0x01, -1])
+    assert ac.ServiceDataRaw == {0x11: (0x10, 0x14, 0x00), 0xD2: (0x10, 0x01, 0xFF)}
 
 
 def test_parse_temperatures_fixed_tags_are_not_operation_data(parser):
@@ -437,6 +457,8 @@ def test_parse_temperatures_service_data_absent_by_default(parser):
     assert ac.DischargeSuperheatRaw is None
     assert ac.ProtectionRaw is None
     assert ac.SilentOperation is None
+    assert ac.IndoorHumidity is None
+    assert ac.IndoorHumidityRaw is None
     assert ac.ServiceDataRaw == {}
 
 

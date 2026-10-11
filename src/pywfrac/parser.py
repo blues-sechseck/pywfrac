@@ -77,6 +77,13 @@ SILENT_OPERATION_BIT: Final = 0x20
 # bridge treats 0x21 like an unknown read and gets no reply segment - yet the
 # indoor unit applies it. Whether it took effect shows only in a read of 0xDD.
 SILENT_OPERATION_WRITE_CODE: Final = 0x21
+# Relative humidity in % at the indoor unit's return-air sensor (op2). Whether
+# a unit has the sensor depends on the series (ZS-WF: SRK35/50 only; ZSX, ZT-WF:
+# every size). Units without one answer a constant 30, and no value below 30
+# has been seen, so 30 means "no sensor" or the range floor. 0 is what MHI's
+# service manuals give for a broken sensor wire.
+SERVICE_DATA_HUMIDITY: Final = 0xAD
+HUMIDITY_UNKNOWN_BYTES: Final = (0, 30, 0xFF)
 SERVICE_DATA_CODES: Final = (
     SERVICE_DATA_COMPRESSOR_FREQ,
     SERVICE_DATA_OPERATING_CURRENT,
@@ -88,6 +95,7 @@ SERVICE_DATA_CODES: Final = (
     SERVICE_DATA_DISCHARGE_SUPERHEAT_RAW,
     SERVICE_DATA_PROTECTION_RAW,
     SERVICE_DATA_SILENT_OPERATION,
+    SERVICE_DATA_HUMIDITY,
 )
 SERVICE_DATA_CODE_BY_FIELD: Final = {
     "CompressorFrequency": SERVICE_DATA_COMPRESSOR_FREQ,
@@ -106,6 +114,8 @@ SERVICE_DATA_CODE_BY_FIELD: Final = {
     "DischargeSuperheatRaw": SERVICE_DATA_DISCHARGE_SUPERHEAT_RAW,
     "ProtectionRaw": SERVICE_DATA_PROTECTION_RAW,
     "SilentOperation": SERVICE_DATA_SILENT_OPERATION,
+    "IndoorHumidity": SERVICE_DATA_HUMIDITY,
+    "IndoorHumidityRaw": SERVICE_DATA_HUMIDITY,
 }
 
 # The coil thermistor is the same part as the two air sensors - MHI's manuals
@@ -791,6 +801,9 @@ class RacParser:
             ac_device.DischargeSuperheatRaw = op2
         elif code == SERVICE_DATA_PROTECTION_RAW:
             ac_device.ProtectionRaw = op2
+        elif code == SERVICE_DATA_HUMIDITY:
+            ac_device.IndoorHumidityRaw = op2
+            ac_device.IndoorHumidity = None if op2 in HUMIDITY_UNKNOWN_BYTES else op2
         elif code == SERVICE_DATA_SILENT_OPERATION and op1 == SILENT_OPERATION_SELECTOR:
             ac_device.SilentOperation = bool(op2 & SILENT_OPERATION_BIT)
 
