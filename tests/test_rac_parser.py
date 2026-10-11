@@ -423,6 +423,25 @@ def test_parse_temperatures_humidity(parser, op2, expected):
     assert ac.IndoorHumidityRaw == op2
 
 
+@pytest.mark.parametrize(
+    ("op1", "expected"),
+    [
+        (0x10, False),
+        (0x11, True),
+        # Anything else is not a defrost answer we know.
+        (0x12, None),
+        (0x01, None),
+        (0x00, None),
+        (0xFF, None),
+    ],
+)
+def test_parse_temperatures_defrosting(parser, op1, expected):
+    ac = Aircon()
+    parser._parse_temperatures(ac, [0x0C, op1 - 256 if op1 > 127 else op1, -1, -1])
+    assert ac.Defrosting is expected
+    assert ac.DefrostingRaw == op1
+
+
 def test_parse_temperatures_keeps_every_operation_data_segment_raw(parser):
     # One decoded code, one nobody has a formula for: both reach ServiceDataRaw.
     ac = Aircon()
@@ -459,6 +478,8 @@ def test_parse_temperatures_service_data_absent_by_default(parser):
     assert ac.SilentOperation is None
     assert ac.IndoorHumidity is None
     assert ac.IndoorHumidityRaw is None
+    assert ac.Defrosting is None
+    assert ac.DefrostingRaw is None
     assert ac.ServiceDataRaw == {}
 
 

@@ -84,6 +84,11 @@ SILENT_OPERATION_WRITE_CODE: Final = 0x21
 # service manuals give for a broken sensor wire.
 SERVICE_DATA_HUMIDITY: Final = 0xAD
 HUMIDITY_UNKNOWN_BYTES: Final = (0, 30, 0xFF)
+# Defrost flag of the outdoor unit. The value is the low nibble of op1 behind
+# the answer class 1: 0x10 = not defrosting (seen on hardware), 0x11 = defrosting
+# (not seen yet). Being an outdoor-unit value it holds for an idle indoor unit
+# on a multi-split as well.
+SERVICE_DATA_DEFROST: Final = 0x0C
 SERVICE_DATA_CODES: Final = (
     SERVICE_DATA_COMPRESSOR_FREQ,
     SERVICE_DATA_OPERATING_CURRENT,
@@ -96,6 +101,7 @@ SERVICE_DATA_CODES: Final = (
     SERVICE_DATA_PROTECTION_RAW,
     SERVICE_DATA_SILENT_OPERATION,
     SERVICE_DATA_HUMIDITY,
+    SERVICE_DATA_DEFROST,
 )
 SERVICE_DATA_CODE_BY_FIELD: Final = {
     "CompressorFrequency": SERVICE_DATA_COMPRESSOR_FREQ,
@@ -116,6 +122,8 @@ SERVICE_DATA_CODE_BY_FIELD: Final = {
     "SilentOperation": SERVICE_DATA_SILENT_OPERATION,
     "IndoorHumidity": SERVICE_DATA_HUMIDITY,
     "IndoorHumidityRaw": SERVICE_DATA_HUMIDITY,
+    "Defrosting": SERVICE_DATA_DEFROST,
+    "DefrostingRaw": SERVICE_DATA_DEFROST,
 }
 
 # The coil thermistor is the same part as the two air sensors - MHI's manuals
@@ -804,6 +812,9 @@ class RacParser:
         elif code == SERVICE_DATA_HUMIDITY:
             ac_device.IndoorHumidityRaw = op2
             ac_device.IndoorHumidity = None if op2 in HUMIDITY_UNKNOWN_BYTES else op2
+        elif code == SERVICE_DATA_DEFROST:
+            ac_device.DefrostingRaw = op1
+            ac_device.Defrosting = {0x10: False, 0x11: True}.get(op1)
         elif code == SERVICE_DATA_SILENT_OPERATION and op1 == SILENT_OPERATION_SELECTOR:
             ac_device.SilentOperation = bool(op2 & SILENT_OPERATION_BIT)
 
