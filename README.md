@@ -80,6 +80,11 @@ The `airconStat` wire format, error codes, and per-model capability tables
 are documented in the integration's
 [module reference](https://github.com/blues-sechseck/Mitsubishi-WF-RAC-Integration/blob/main/docs/wf-rac-module-reference.md).
 
+## Used by
+
+- [Mitsubishi WF-RAC Integration](https://github.com/blues-sechseck/Mitsubishi-WF-RAC-Integration) for Home Assistant
+- [AirLAN](https://github.com/erdtsieck/airlan), an Android app (port of the protocol code, tested against pywfrac vectors)
+
 ## Versioning
 
 This library follows [SemVer](https://semver.org/), independent of the
