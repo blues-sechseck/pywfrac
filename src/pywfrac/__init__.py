@@ -25,6 +25,7 @@ from .parser import (
     SERVICE_DATA_DISCHARGE_SUPERHEAT_RAW,
     SERVICE_DATA_EEV_PULSES,
     SERVICE_DATA_HOT_GAS_TEMP,
+    SERVICE_DATA_HOT_START,
     SERVICE_DATA_HUMIDITY,
     SERVICE_DATA_INDOOR_COIL_OUTLET_RAW,
     SERVICE_DATA_INDOOR_COIL_RAW,
@@ -34,6 +35,7 @@ from .parser import (
     SERVICE_DATA_SILENT_OPERATION,
     RacParser,
     defrost_possible,
+    hot_start_possible,
 )
 from .repository import (
     MIN_TIME_BETWEEN_REQUESTS,
@@ -83,6 +85,7 @@ __all__ = [
     "SERVICE_DATA_CODES",
     "DEFROST_OUTDOOR_TEMP_MAX",
     "defrost_possible",
+    "hot_start_possible",
     "SERVICE_DATA_BUDGET",
     "SERVICE_DATA_REFUSALS_TO_SUSPEND",
     "CodeState",
@@ -95,6 +98,7 @@ __all__ = [
     "SERVICE_DATA_DISCHARGE_SUPERHEAT_RAW",
     "SERVICE_DATA_EEV_PULSES",
     "SERVICE_DATA_HOT_GAS_TEMP",
+    "SERVICE_DATA_HOT_START",
     "SERVICE_DATA_HUMIDITY",
     "SERVICE_DATA_INDOOR_COIL_OUTLET_RAW",
     "SERVICE_DATA_OPERATING_CURRENT",

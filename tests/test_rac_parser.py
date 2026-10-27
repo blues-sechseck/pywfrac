@@ -17,7 +17,7 @@ from base64 import b64decode
 
 import pytest
 
-from pywfrac import AIRFLOW_UNKNOWN, ProtectionState, defrost_possible
+from pywfrac import AIRFLOW_UNKNOWN, ProtectionState, defrost_possible, hot_start_possible
 from pywfrac.models.aircon import (
     Aircon,
     AirconStat,
@@ -444,6 +444,23 @@ def test_parse_temperatures_defrosting(parser, op1, expected):
 
 
 @pytest.mark.parametrize(
+    ("op1", "expected"),
+    [
+        (0x00, False),
+        (0x02, True),
+        # Another model has answered 0x01; its meaning is unknown.
+        (0x01, None),
+        (0xFF, None),
+    ],
+)
+def test_parse_temperatures_hot_start(parser, op1, expected):
+    ac = Aircon()
+    parser._parse_temperatures(ac, [0x0D, op1 - 256 if op1 > 127 else op1, -1, -1])
+    assert ac.HotStart is expected
+    assert ac.HotStartRaw == op1
+
+
+@pytest.mark.parametrize(
     ("op2", "expected"),
     [
         (0, ProtectionState.NORMAL),
@@ -501,6 +518,8 @@ def test_parse_temperatures_service_data_absent_by_default(parser):
     assert ac.IndoorHumidityRaw is None
     assert ac.Defrosting is None
     assert ac.DefrostingRaw is None
+    assert ac.HotStart is None
+    assert ac.HotStartRaw is None
     assert ac.ServiceDataRaw == {}
 
 
@@ -1104,3 +1123,23 @@ def test_defrost_possible(frequency, outdoor, expected):
 
 def test_defrost_possible_without_a_reading():
     assert defrost_possible(None) is False
+
+
+@pytest.mark.parametrize(
+    ("operation", "mode", "cool_hot", "expected"),
+    [
+        (True, 2, False, True),
+        (True, 0, True, True),
+        (True, 0, False, False),
+        (True, 1, True, False),
+        (True, 3, True, False),
+        (False, 2, False, False),
+    ],
+)
+def test_hot_start_possible(operation, mode, cool_hot, expected):
+    ac = Aircon(Operation=operation, OperationMode=mode, CoolHotJudge=cool_hot)
+    assert hot_start_possible(ac) is expected
+
+
+def test_hot_start_possible_without_a_reading():
+    assert hot_start_possible(None) is False

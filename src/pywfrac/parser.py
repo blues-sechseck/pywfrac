@@ -95,6 +95,11 @@ SERVICE_DATA_DEFROST: Final = 0x0C
 # what we can see; 8 degrees C is a generous margin above that, so a defrost is
 # never ruled out while it could still happen.
 DEFROST_OUTDOOR_TEMP_MAX: Final = 8.0
+# Hot start of the indoor unit (cold-draft prevention in heating: the fan is
+# held back until the indoor coil is warm, about 29 degrees C). op1 is 0x02
+# while it is active and 0x00 otherwise; a different model has answered 0x01,
+# which is not interpreted.
+SERVICE_DATA_HOT_START: Final = 0x0D
 SERVICE_DATA_CODES: Final = (
     SERVICE_DATA_COMPRESSOR_FREQ,
     SERVICE_DATA_OPERATING_CURRENT,
@@ -108,6 +113,7 @@ SERVICE_DATA_CODES: Final = (
     SERVICE_DATA_SILENT_OPERATION,
     SERVICE_DATA_HUMIDITY,
     SERVICE_DATA_DEFROST,
+    SERVICE_DATA_HOT_START,
 )
 SERVICE_DATA_CODE_BY_FIELD: Final = {
     "CompressorFrequency": SERVICE_DATA_COMPRESSOR_FREQ,
@@ -131,6 +137,8 @@ SERVICE_DATA_CODE_BY_FIELD: Final = {
     "IndoorHumidityRaw": SERVICE_DATA_HUMIDITY,
     "Defrosting": SERVICE_DATA_DEFROST,
     "DefrostingRaw": SERVICE_DATA_DEFROST,
+    "HotStart": SERVICE_DATA_HOT_START,
+    "HotStartRaw": SERVICE_DATA_HOT_START,
 }
 
 # The coil thermistor is the same part as the two air sensors - MHI's manuals
@@ -275,6 +283,17 @@ def defrost_possible(airco: Aircon | None) -> bool:
     if airco is None or airco.CompressorFrequency is None:
         return False
     return airco.CompressorFrequency > 0 and airco.OutdoorTemp < DEFROST_OUTDOOR_TEMP_MAX
+
+
+def hot_start_possible(airco: Aircon | None) -> bool:
+    """Whether the indoor unit can be in its hot start right now.
+
+    Needs the unit on and heating: mode 2, or AUTO (0) with CoolHotJudge, which
+    is true for heating. The hot start never happens in any other mode.
+    """
+    if airco is None or not airco.Operation:
+        return False
+    return airco.OperationMode == 2 or (airco.OperationMode == 0 and airco.CoolHotJudge)
 
 
 def is_external_temperature_mode(operation: bool, operation_mode: int) -> bool:
@@ -842,6 +861,9 @@ class RacParser:
         elif code == SERVICE_DATA_DEFROST:
             ac_device.DefrostingRaw = op1
             ac_device.Defrosting = {0x10: False, 0x11: True}.get(op1)
+        elif code == SERVICE_DATA_HOT_START:
+            ac_device.HotStartRaw = op1
+            ac_device.HotStart = {0x00: False, 0x02: True}.get(op1)
         elif code == SERVICE_DATA_SILENT_OPERATION and op1 == SILENT_OPERATION_SELECTOR:
             ac_device.SilentOperation = bool(op2 & SILENT_OPERATION_BIT)
 
