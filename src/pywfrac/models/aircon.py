@@ -147,6 +147,9 @@ class Aircon(AirconBase):
     # Outdoor unit defrosting (0x0C); None for any answer other than 0x10/0x11.
     Defrosting: bool | None = None
     DefrostingRaw: int | None = None  # op1 as received
+    # Indoor unit hot start (0x0D); None for any answer other than 0x00/0x02.
+    HotStart: bool | None = None
+    HotStartRaw: int | None = None  # op1 as received
     # Every operation-data segment of this frame as (op1, op2, op3), keyed by
     # code - decoded or not. The undecoded ones are what a reader without a
     # formula still gets to look at.
