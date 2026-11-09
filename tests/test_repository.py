@@ -283,6 +283,24 @@ async def test_a_stored_method_falls_back_within_the_same_call(repository, old_m
     ]
 
 
+async def test_the_fallback_names_what_broke(repository, caplog):
+    """A dropped connection and a timeout look alike without the cause."""
+    caplog.set_level("DEBUG", logger="pywfrac.repository")
+    repo, _ = repository(
+        [ClientConnectionError("Server disconnected"), _FakeResponse(200, _OK_BODY)],
+        method="http",
+    )
+    repo._ssl_context = ssl.create_default_context()
+
+    await repo.get_aircon_stats("airco-id")
+
+    fallback = [r.message for r in caplog.records if "trying HTTPS" in r.message]
+    assert fallback == [
+        "HTTP failed (ClientConnectionError: Aircon returned error: Server disconnected), "
+        "trying HTTPS"
+    ]
+
+
 async def test_the_other_protocol_waits_its_turn(repository):
     """The fallback is a second connection, spaced like any other."""
     repo, _ = repository(
