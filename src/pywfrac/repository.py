@@ -457,9 +457,14 @@ class Repository:
                                 self._method = None
                                 raise first_error
                             raise
+                        # The cause's type names what broke: a timeout's own
+                        # message is empty, and a dropped connection reads the
+                        # same as a refused one without it.
                         _LOGGER.debug(
-                            "%s failed, trying %s",
+                            "%s failed (%s: %s), trying %s",
                             method.upper(),
+                            type(ex.__cause__ or ex).__name__,
+                            ex,
                             methods[index + 1].upper(),
                         )
                         # The other protocol is a second connection, rationed
