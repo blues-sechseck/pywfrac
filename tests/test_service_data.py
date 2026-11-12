@@ -48,8 +48,32 @@ def test_several_unproven_codes_become_suspects_without_counting():
     assert refusals.state(A) is refusals.state(B) is CodeState.SUSPECT
 
 
-def test_a_suspended_code_stays_suspended_when_refused_again():
+def test_a_refusal_before_any_answer_never_suspends():
     refusals = ServiceDataRefusals()
+    for _ in range(4):
+        assert refusals.note_refused((A,)) == ()
+    assert refusals.state(A) is CodeState.SUSPECT
+    assert not refusals.is_suspended(A)
+
+
+def test_a_lone_code_refused_twice_is_suspended_once_anything_was_answered():
+    refusals = _proven(C)
+    assert refusals.note_refused((A,)) == ()
+    assert refusals.note_refused((A,)) == (A,)
+    assert refusals.state(A) is CodeState.SUSPENDED
+
+
+def test_refusals_before_the_first_answer_do_not_carry_over():
+    refusals = ServiceDataRefusals()
+    refusals.note_refused((A,))
+    refusals.note_refused((A,))
+    refusals.note_answered(C)
+    assert refusals.note_refused((A,)) == ()
+    assert refusals.state(A) is CodeState.SUSPECT
+
+
+def test_a_suspended_code_stays_suspended_when_refused_again():
+    refusals = _proven(C)
     refusals.note_refused((A,))
     assert refusals.note_refused((A,)) == (A,)
     assert refusals.note_refused((A,)) == ()
@@ -58,7 +82,7 @@ def test_a_suspended_code_stays_suspended_when_refused_again():
 
 
 def test_an_answer_lifts_a_suspension_and_resets_the_count():
-    refusals = ServiceDataRefusals()
+    refusals = _proven(C)
     refusals.note_refused((A,))
     refusals.note_refused((A,))
     assert refusals.is_suspended(A)
@@ -87,7 +111,7 @@ def test_the_budget_is_ten_segments():
 
 
 def test_a_suspended_code_never_rides():
-    refusals = ServiceDataRefusals()
+    refusals = _proven(C)
     refusals.note_refused((A,))
     refusals.note_refused((A,))
     assert refusals.admit([A]) == ()

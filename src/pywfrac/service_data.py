@@ -23,7 +23,9 @@ SERVICE_DATA_BUDGET: Final = 10
 
 # A code is suspended after this many refusals while it was the only code in
 # the request the module had not answered before: result 11 is also what a
-# request gets while another client holds the write lock.
+# request gets while another client holds the write lock. Refusals only count
+# once the unit has answered at least one code: a unit that refuses everything
+# from the start says nothing about any single code.
 SERVICE_DATA_REFUSALS_TO_SUSPEND: Final = 2
 
 
@@ -42,13 +44,16 @@ class ServiceDataRefusals:
     A code starts untested, becomes ok when a segment for it arrives, and
     suspect when a request holding it was refused. Only a code that was the
     single unproven one in a refused request is blamed for it, and a code
-    refused alone twice is suspended. Memory only; a new instance starts over.
+    refused alone twice is suspended. A refusal counts against a code only
+    once the unit has answered at least one code; until then it just marks
+    the unproven codes suspect. Memory only; a new instance starts over.
     """
 
     def __init__(self) -> None:
         """Start with every code untested."""
         self._states: dict[int, CodeState] = {}
         self._refusals: dict[int, int] = {}
+        self._any_answered = False
 
     def state(self, code: int) -> CodeState:
         """What is known about this code."""
@@ -65,6 +70,7 @@ class ServiceDataRefusals:
     def note_answered(self, code: int) -> None:
         """A segment for this code arrived: it is proven, a suspension is lifted."""
         self._states[code] = CodeState.OK
+        self._any_answered = True
         self._refusals.pop(code, None)
 
     def note_refused(self, requested: Iterable[int]) -> tuple[int, ...]:
@@ -72,9 +78,15 @@ class ServiceDataRefusals:
 
         Several unproven codes all become suspects and are then asked one at a
         time; with none, nobody is blamed. Returns the codes this call
-        suspended.
+        suspended. While the unit has answered nothing yet, codes are only
+        marked suspect and never counted or suspended.
         """
         unproven = [c for c in requested if self.state(c) is not CodeState.OK]
+        if not self._any_answered:
+            for code in unproven:
+                if not self.is_suspended(code):
+                    self._states[code] = CodeState.SUSPECT
+            return ()
         if len(unproven) > 1:
             for code in unproven:
                 if not self.is_suspended(code):
