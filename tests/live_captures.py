@@ -91,4 +91,31 @@ LIVE_CAPTURES = {
             "Vacant": False,
         },
     ),
+    # SRK20ZS-WF, WF-RAC-HTTPS 025/200, 2026-11-22: setAirconStat replies with
+    # the operation-data trailer. Heating at the end of a defrost: 0 Hz, indoor
+    # coil raw 17, 0x0C still answering "not defrosting", content[9] = 0x01.
+    "heat_defrost_end": (
+        "AAAAAACYAAAAAAAAAAAAAAAAAf////9HEYEEEQEqmAAAAAEABAQAAAAAAA2AIJj/gBBe/5QQBQAMEP//DQD//xEQAP8TEE4BfBAA/4EgEf+FEA7/hxAQ/5AQCP+xEAD/lP8=",
+        {
+            "Operation": True,
+            "OperationMode": 2,
+            "PresetTemp": 21.0,
+            "AirFlow": 2,
+            "ModelNrRaw": 1,
+            "Vacant": False,
+        },
+    ),
+    # Same unit, heating normally after the defrost: EEV 0x0073, coil raw 0x65,
+    # content[9] = 0x02 (compressor running).
+    "heat_after_defrost": (
+        "AAAAAACYAAAAAAAAAAAAAAAAAf////9HEYEEEQEqmAAAAAIABAQAAAAAAAuAIJj/gBBe/5QQBQAMEP//DQD//xEUSf8TEHMAgSBl/4UQDf+HEGT/kBAW/7qN",
+        {
+            "Operation": True,
+            "OperationMode": 2,
+            "PresetTemp": 21.0,
+            "AirFlow": 2,
+            "ModelNrRaw": 1,
+            "Vacant": False,
+        },
+    ),
 }

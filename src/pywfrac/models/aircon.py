@@ -101,6 +101,9 @@ class Aircon(AirconBase):
     # content[9] & 0x02 - not gated by ModelNr/Capabilities, present in every
     # ordinary status poll. See rac_parser.COMPRESSOR_RUNNING_MASK.
     CompressorRunning: bool = False
+    # The whole content[9] byte behind CompressorRunning, for bits not yet
+    # interpreted (0x01 has been seen set as a defrost ends).
+    OperationStatusRaw: int | None = None
     # Raw ModelNr byte (content[0] & 127) before mapping to the known 0/1/2
     # values - kept around so an unrecognized value (ModelNr == -1) is still
     # visible as a diagnostic, e.g. for unrecognized-model bug reports.
@@ -125,7 +128,8 @@ class Aircon(AirconBase):
     HotGasTemp: float | None = None  # deg C
     HotGasTempRaw: int | None = None
     EevPulses: int | None = None
-    EevPosition: int | None = None  # % of raw pulse range 0-255, full-open pulse count unknown
+    # % of EEV_FULL_OPEN_PULSES, capped at 100; the stroke is assumed, not confirmed per model.
+    EevPosition: int | None = None
     # deg C, THI-R1/THI-R3, per indoor unit. None outside the calibrated band,
     # which the raw bytes below still cover - see RacParser._coil_temp().
     IndoorCoilTemp: float | None = None
@@ -145,6 +149,8 @@ class Aircon(AirconBase):
     IndoorHumidity: int | None = None  # % relative; None for 0 (broken wire), 30 (no sensor), 255
     IndoorHumidityRaw: int | None = None
     # Outdoor unit defrosting (0x0C); None for any answer other than 0x10/0x11.
+    # Stays 0x10 during real defrosts, so keep it as a raw comparison value and
+    # use parser.defrost_detected() instead.
     Defrosting: bool | None = None
     DefrostingRaw: int | None = None  # op1 as received
     # Indoor unit hot start (0x0D); None for any answer other than 0x00/0x02.

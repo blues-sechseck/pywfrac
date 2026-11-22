@@ -86,15 +86,22 @@ SILENT_OPERATION_WRITE_CODE: Final = 0x21
 SERVICE_DATA_HUMIDITY: Final = 0xAD
 HUMIDITY_UNKNOWN_BYTES: Final = (0, 30, 0xFF)
 # Defrost flag of the outdoor unit. The value is the low nibble of op1 behind
-# the answer class 1: 0x10 = not defrosting (seen on hardware), 0x11 = defrosting
-# (not seen yet). Being an outdoor-unit value it holds for an idle indoor unit
-# on a multi-split as well.
+# the answer class 1: 0x10 = not defrosting, 0x11 = defrosting (never seen).
+# It has answered 0x10 throughout real defrosts, on two firmware branches, so
+# it is only a raw comparison value; defrost_detected() is the detection.
 SERVICE_DATA_DEFROST: Final = 0x0C
 # A defrost needs a cold outdoor coil after a long heating run, which the
 # service manual puts at a coil temperature below freezing. The outdoor air is
 # what we can see; 8 degrees C is a generous margin above that, so a defrost is
 # never ruled out while it could still happen.
 DEFROST_OUTDOOR_TEMP_MAX: Final = 8.0
+# In a reverse-cycle defrost the indoor coil becomes the evaporator and its
+# thermistor byte collapses: 8-21 during a defrost, against 140-190 in normal
+# heating and about 80 for an idle unit. 30 sits well clear of both sides.
+DEFROST_INDOOR_COIL_RAW_MAX: Final = 30
+# Full stroke of the expansion valve in pulses. 500 is the usual stroke of MHI
+# room-air-conditioner EEVs and is not confirmed for every model.
+EEV_FULL_OPEN_PULSES: Final = 500
 # Hot start of the indoor unit (cold-draft prevention in heating: the fan is
 # held back until the indoor coil is warm, about 29 degrees C). op1 is 0x02
 # while it is active and 0x00 otherwise; a different model has answered 0x01,
@@ -279,10 +286,35 @@ def defrost_possible(airco: Aircon | None) -> bool:
     Needs the compressor running (0x11 above zero) and outdoor air below
     DEFROST_OUTDOOR_TEMP_MAX. False while the compressor reading is missing,
     so a reading that is not there never counts as a reason to ask.
+
+    This only bounds when asking 0x0C is worthwhile; the answer itself does not
+    reliably show a defrost, see defrost_detected().
     """
     if airco is None or airco.CompressorFrequency is None:
         return False
     return airco.CompressorFrequency > 0 and airco.OutdoorTemp < DEFROST_OUTDOOR_TEMP_MAX
+
+
+def _is_heating(airco: Aircon) -> bool:
+    # AUTO (0) heats when CoolHotJudge is true.
+    return airco.OperationMode == 2 or (airco.OperationMode == 0 and airco.CoolHotJudge)
+
+
+def defrost_detected(airco: Aircon | None) -> bool | None:
+    """Whether the unit is defrosting, judged from the indoor coil thermistor.
+
+    None when it cannot be told: no reading, or the unit is off (an indoor
+    unit that is off does not see a defrost through its own coil). False when
+    on but not heating, where a cold coil is normal and no defrost happens.
+    While heating, a raw coil byte below DEFROST_INDOOR_COIL_RAW_MAX means
+    defrost. The compressor frequency is not consulted: it briefly drops to
+    0 Hz at the start and end of a defrost while the coil is still cold.
+    """
+    if airco is None or airco.IndoorCoilRaw is None or not airco.Operation:
+        return None
+    if not _is_heating(airco):
+        return False
+    return airco.IndoorCoilRaw < DEFROST_INDOOR_COIL_RAW_MAX
 
 
 def hot_start_possible(airco: Aircon | None) -> bool:
@@ -293,7 +325,7 @@ def hot_start_possible(airco: Aircon | None) -> bool:
     """
     if airco is None or not airco.Operation:
         return False
-    return airco.OperationMode == 2 or (airco.OperationMode == 0 and airco.CoolHotJudge)
+    return _is_heating(airco)
 
 
 def is_external_temperature_mode(operation: bool, operation_mode: int) -> bool:
@@ -751,6 +783,9 @@ class RacParser:
                 )
         ac_device.Vacant = (content[10] & 1) != 0
         ac_device.CompressorRunning = (content[9] & COMPRESSOR_RUNNING_MASK) != 0
+        # Bit 0x02 is compressor running; bit 0x01 has been seen set when the
+        # compressor stops at the end of a defrost and is not yet interpreted.
+        ac_device.OperationStatusRaw = content[9]
         # The temperature the controller is working with, whatever its source:
         # every unit always reports one here, so the value alone says nothing
         # about where it came from. Kept as the raw byte rather than a float
@@ -797,7 +832,7 @@ class RacParser:
             elif (vals[i] & 0xFF) in SERVICE_DATA_CODES:
                 ac_device.ServiceDataRaw[vals[i] & 0xFF] = _segment_bytes(vals, i)
                 self._apply_service_data_segment(
-                    ac_device, vals[i] & 0xFF, vals[i + 1] & 0xFF, vals[i + 2] & 0xFF
+                    ac_device, vals[i] & 0xFF, *_segment_bytes(vals, i)
                 )
             else:
                 ac_device.ServiceDataRaw[vals[i] & 0xFF] = _segment_bytes(vals, i)
@@ -824,12 +859,14 @@ class RacParser:
         )
 
     @staticmethod
-    def _apply_service_data_segment(ac_device: Aircon, code: int, op1: int, op2: int) -> None:
+    def _apply_service_data_segment(
+        ac_device: Aircon, code: int, op1: int, op2: int, op3: int
+    ) -> None:
         """Decode one operation-data segment (see SERVICE_DATA_CODES).
         Formulas and op1/op2 naming from MHI-AC-Ctrl, cross-checked live
         against a load test (varying compressor frequency) and a batched
-        request - see wf-rac-module-reference.md §5.4. Op3 carries no known
-        data for any of these four codes."""
+        request - see wf-rac-module-reference.md §5.4. Op3 is the high byte of
+        the EEV pulse count and unused by the other codes."""
         if code == SERVICE_DATA_COMPRESSOR_FREQ:
             ac_device.CompressorFrequency = (op1 - 0x10) * 25.6 + 0.1 * op2
             ac_device.CompressorFrequencyRaw = op1 << 8 | op2
@@ -840,8 +877,11 @@ class RacParser:
             ac_device.HotGasTemp = RacParser._hot_gas_temp(op2)
             ac_device.HotGasTempRaw = op2
         elif code == SERVICE_DATA_EEV_PULSES:
-            ac_device.EevPulses = op2
-            ac_device.EevPosition = round(op2 * 100 / 255)
+            # 0xFF is the usual "no value" filler; a count above 0xFEFF does not exist.
+            ac_device.EevPulses = op2 if op3 == 0xFF else (op3 << 8) | op2
+            ac_device.EevPosition = min(
+                100, round(ac_device.EevPulses * 100 / EEV_FULL_OPEN_PULSES)
+            )
         elif code == SERVICE_DATA_INDOOR_COIL_RAW:
             ac_device.IndoorCoilRaw = op2
             ac_device.IndoorCoilTemp = RacParser._coil_temp(op2, code)
