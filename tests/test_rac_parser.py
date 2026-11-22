@@ -17,7 +17,13 @@ from base64 import b64decode
 
 import pytest
 
-from pywfrac import AIRFLOW_UNKNOWN, ProtectionState, defrost_possible, hot_start_possible
+from pywfrac import (
+    AIRFLOW_UNKNOWN,
+    ProtectionState,
+    defrost_detected,
+    defrost_possible,
+    hot_start_possible,
+)
 from pywfrac.models.aircon import (
     Aircon,
     AirconStat,
@@ -351,7 +357,7 @@ def test_parse_temperatures_service_data_segments(parser):
     assert ac.HotGasTemp == pytest.approx(42.5)
     assert ac.HotGasTempRaw == 0x15
     assert ac.EevPulses == 106
-    assert ac.EevPosition == 42
+    assert ac.EevPosition == 21
     # 0x2F = 47 and 0x5D = 93 through the thermistor curve, see
     # COIL_SERIES_RESISTOR. 93 lands on room temperature, which is where a
     # coil settles after a long standstill.
@@ -1143,3 +1149,64 @@ def test_hot_start_possible(operation, mode, cool_hot, expected):
 
 def test_hot_start_possible_without_a_reading():
     assert hot_start_possible(None) is False
+
+
+def _coil(raw, *, on=True, mode=2, judge=False, hz=40.0):
+    return Aircon(
+        Operation=on,
+        OperationMode=mode,
+        CoolHotJudge=judge,
+        IndoorCoilRaw=raw,
+        CompressorFrequency=hz,
+    )
+
+
+@pytest.mark.parametrize(
+    ("airco", "expected"),
+    [
+        (None, None),
+        (_coil(None), None),
+        (_coil(15, on=False), None),
+        (_coil(15, mode=1), False),
+        (_coil(15, mode=3), False),
+        (_coil(15, mode=2), True),
+        (_coil(15, mode=0, judge=True), True),
+        (_coil(15, mode=0, judge=False), False),
+        (_coil(29), True),
+        (_coil(30), False),
+        (_coil(189), False),
+        (_coil(15, hz=0.0), True),
+        (_coil(15, hz=None), True),
+    ],
+)
+def test_defrost_detected(airco, expected):
+    assert defrost_detected(airco) is expected
+
+
+@pytest.mark.parametrize(
+    ("op2", "op3", "pulses", "position"),
+    [
+        (0x4E, 0x01, 334, 67),
+        (0xD6, 0x01, 470, 94),
+        (0x73, 0x00, 115, 23),
+        (0xFF, 0x03, 1023, 100),
+        (0x73, 0xFF, 115, 23),
+    ],
+)
+def test_parse_temperatures_eev_pulses_are_two_bytes(parser, op2, op3, pulses, position):
+    ac = Aircon()
+    parser._parse_temperatures(ac, [0x13, 0x10, op2 - 256 if op2 > 127 else op2, op3])
+    assert ac.EevPulses == pulses
+    assert ac.EevPosition == position
+
+
+def test_operation_status_raw_from_live_frames(parser):
+    end = parser.translate_bytes(LIVE_CAPTURES["heat_defrost_end"][0])
+    after = parser.translate_bytes(LIVE_CAPTURES["heat_after_defrost"][0])
+    assert (end.OperationStatusRaw, end.CompressorRunning) == (0x01, False)
+    assert (after.OperationStatusRaw, after.CompressorRunning) == (0x02, True)
+    assert (end.EevPulses, end.EevPosition) == (334, 67)
+    assert (after.EevPulses, after.EevPosition) == (115, 23)
+    assert end.Defrosting is False
+    assert defrost_detected(end) is True
+    assert defrost_detected(after) is False

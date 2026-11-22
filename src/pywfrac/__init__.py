@@ -15,6 +15,7 @@ from .models.aircon import Aircon, AirconCommands, AirconStat, HomeLeaveModeSett
 from .models.status import AirconStatus, FirmwareInfo
 from .parser import (
     AIRFLOW_UNKNOWN,
+    DEFROST_INDOOR_COIL_RAW_MAX,
     DEFROST_OUTDOOR_TEMP_MAX,
     EXTERNAL_TEMPERATURE_MAX,
     EXTERNAL_TEMPERATURE_MIN,
@@ -34,6 +35,7 @@ from .parser import (
     SERVICE_DATA_PROTECTION_RAW,
     SERVICE_DATA_SILENT_OPERATION,
     RacParser,
+    defrost_detected,
     defrost_possible,
     hot_start_possible,
 )
@@ -84,6 +86,8 @@ __all__ = [
     "EXTERNAL_TEMPERATURE_MAX",
     "SERVICE_DATA_CODES",
     "DEFROST_OUTDOOR_TEMP_MAX",
+    "DEFROST_INDOOR_COIL_RAW_MAX",
+    "defrost_detected",
     "defrost_possible",
     "hot_start_possible",
     "SERVICE_DATA_BUDGET",
