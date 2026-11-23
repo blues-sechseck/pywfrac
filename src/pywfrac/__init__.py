@@ -19,6 +19,7 @@ from .parser import (
     DEFROST_OUTDOOR_TEMP_MAX,
     EXTERNAL_TEMPERATURE_MAX,
     EXTERNAL_TEMPERATURE_MIN,
+    OPERATION_STATUS_DEFROST_BIT,
     SERVICE_DATA_CODE_BY_FIELD,
     SERVICE_DATA_CODES,
     SERVICE_DATA_COMPRESSOR_FREQ,
@@ -36,7 +37,9 @@ from .parser import (
     SERVICE_DATA_SILENT_OPERATION,
     RacParser,
     defrost_detected,
+    defrost_from_indoor_coil,
     defrost_possible,
+    defrost_status_bit,
     hot_start_possible,
 )
 from .repository import (
@@ -87,7 +90,10 @@ __all__ = [
     "SERVICE_DATA_CODES",
     "DEFROST_OUTDOOR_TEMP_MAX",
     "DEFROST_INDOOR_COIL_RAW_MAX",
+    "OPERATION_STATUS_DEFROST_BIT",
     "defrost_detected",
+    "defrost_from_indoor_coil",
+    "defrost_status_bit",
     "defrost_possible",
     "hot_start_possible",
     "SERVICE_DATA_BUDGET",

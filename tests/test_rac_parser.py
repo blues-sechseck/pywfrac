@@ -21,7 +21,9 @@ from pywfrac import (
     AIRFLOW_UNKNOWN,
     ProtectionState,
     defrost_detected,
+    defrost_from_indoor_coil,
     defrost_possible,
+    defrost_status_bit,
     hot_start_possible,
 )
 from pywfrac.models.aircon import (
@@ -1183,6 +1185,36 @@ def test_defrost_detected(airco, expected):
     assert defrost_detected(airco) is expected
 
 
+def _status(raw, coil=None, *, on=True, mode=2):
+    ac = _coil(coil, on=on, mode=mode)
+    ac.OperationStatusRaw = raw
+    return ac
+
+
+@pytest.mark.parametrize(
+    ("airco", "bit", "coil", "detected"),
+    [
+        (_status(0x01, coil=150), True, False, True),
+        (_status(0x03, coil=150), True, False, True),
+        (_status(0x02, coil=15), False, True, True),
+        (_status(0x02, coil=150), False, False, False),
+        (_status(0x01, coil=15), True, True, True),
+        (_status(0x01, coil=15, mode=1), False, False, False),
+        (_status(0x01, coil=15, on=False), None, None, None),
+        (_status(None, coil=15), None, True, True),
+        (_status(None, coil=150), None, False, False),
+        (_status(0x01, coil=None), True, None, True),
+        (_status(0x02, coil=None), False, None, False),
+        (_status(None, coil=None), None, None, None),
+        (None, None, None, None),
+    ],
+)
+def test_defrost_signals(airco, bit, coil, detected):
+    assert defrost_status_bit(airco) is bit
+    assert defrost_from_indoor_coil(airco) is coil
+    assert defrost_detected(airco) is detected
+
+
 @pytest.mark.parametrize(
     ("op2", "op3", "pulses", "position"),
     [
@@ -1208,5 +1240,7 @@ def test_operation_status_raw_from_live_frames(parser):
     assert (end.EevPulses, end.EevPosition) == (334, 67)
     assert (after.EevPulses, after.EevPosition) == (115, 23)
     assert end.Defrosting is False
+    assert defrost_status_bit(end) is True
+    assert defrost_status_bit(after) is False
     assert defrost_detected(end) is True
     assert defrost_detected(after) is False

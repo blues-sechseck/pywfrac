@@ -187,6 +187,10 @@ OPERATION_MASK: Final = 3
 # (compressor frequency), see wf-rac-module-reference.md §4.6. Distinguishes
 # "unit on" from "compressor actually running" (e.g. temperature satisfied).
 COMPRESSOR_RUNNING_MASK: Final = 2
+# content[9] bit 0x01 is set throughout a whole defrost, the compressor stops
+# at its start and end included (0x01 while stopped, 0x03 while running in
+# reverse). Seen in one user's trace, not yet confirmed independently.
+OPERATION_STATUS_DEFROST_BIT: Final = 0x01
 
 # --- command (send) lookup tables ---
 CMD_MODE_MASKS: Final = {0: 32, 1: 40, 2: 48, 3: 44, 4: 36}
@@ -300,8 +304,22 @@ def _is_heating(airco: Aircon) -> bool:
     return airco.OperationMode == 2 or (airco.OperationMode == 0 and airco.CoolHotJudge)
 
 
-def defrost_detected(airco: Aircon | None) -> bool | None:
-    """Whether the unit is defrosting, judged from the indoor coil thermistor.
+def defrost_status_bit(airco: Aircon | None) -> bool | None:
+    """Whether the status byte (content[9]) flags a defrost.
+
+    None when it cannot be told: no reading, no status byte, or the unit is
+    off. False when on but not heating, where no defrost happens. While
+    heating, OPERATION_STATUS_DEFROST_BIT set means defrost.
+    """
+    if airco is None or airco.OperationStatusRaw is None or not airco.Operation:
+        return None
+    if not _is_heating(airco):
+        return False
+    return bool(airco.OperationStatusRaw & OPERATION_STATUS_DEFROST_BIT)
+
+
+def defrost_from_indoor_coil(airco: Aircon | None) -> bool | None:
+    """Whether the indoor coil thermistor shows a defrost.
 
     None when it cannot be told: no reading, or the unit is off (an indoor
     unit that is off does not see a defrost through its own coil). False when
@@ -315,6 +333,22 @@ def defrost_detected(airco: Aircon | None) -> bool | None:
     if not _is_heating(airco):
         return False
     return airco.IndoorCoilRaw < DEFROST_INDOOR_COIL_RAW_MAX
+
+
+def defrost_detected(airco: Aircon | None) -> bool | None:
+    """Whether the unit is defrosting.
+
+    The status byte bit (defrost_status_bit) is the primary signal; the indoor
+    coil thermistor (defrost_from_indoor_coil) is the fallback for frames or
+    firmware without it, and reacts later. True if either says so, None if
+    neither can be told, otherwise False.
+    """
+    signals = (defrost_status_bit(airco), defrost_from_indoor_coil(airco))
+    if True in signals:
+        return True
+    if all(signal is None for signal in signals):
+        return None
+    return False
 
 
 def hot_start_possible(airco: Aircon | None) -> bool:
@@ -783,8 +817,8 @@ class RacParser:
                 )
         ac_device.Vacant = (content[10] & 1) != 0
         ac_device.CompressorRunning = (content[9] & COMPRESSOR_RUNNING_MASK) != 0
-        # Bit 0x02 is compressor running; bit 0x01 has been seen set when the
-        # compressor stops at the end of a defrost and is not yet interpreted.
+        # Bit 0x02 is compressor running, bit 0x01 is defrost
+        # (OPERATION_STATUS_DEFROST_BIT).
         ac_device.OperationStatusRaw = content[9]
         # The temperature the controller is working with, whatever its source:
         # every unit always reports one here, so the value alone says nothing
