@@ -101,8 +101,8 @@ class Aircon(AirconBase):
     # content[9] & 0x02 - not gated by ModelNr/Capabilities, present in every
     # ordinary status poll. See rac_parser.COMPRESSOR_RUNNING_MASK.
     CompressorRunning: bool = False
-    # The whole content[9] byte behind CompressorRunning, for bits not yet
-    # interpreted (0x01 has been seen set as a defrost ends).
+    # The whole content[9] byte behind CompressorRunning: bit 0x01 = defrost,
+    # bit 0x02 = compressor running.
     OperationStatusRaw: int | None = None
     # Raw ModelNr byte (content[0] & 127) before mapping to the known 0/1/2
     # values - kept around so an unrecognized value (ModelNr == -1) is still
