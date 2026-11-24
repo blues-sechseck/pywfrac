@@ -820,6 +820,7 @@ class RacParser:
         # Bit 0x02 is compressor running, bit 0x01 is defrost
         # (OPERATION_STATUS_DEFROST_BIT).
         ac_device.OperationStatusRaw = content[9]
+        ac_device.StatusDb5Raw = content[7] & 0xFF
         # The temperature the controller is working with, whatever its source:
         # every unit always reports one here, so the value alone says nothing
         # about where it came from. Kept as the raw byte rather than a float

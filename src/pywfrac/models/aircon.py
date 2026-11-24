@@ -104,6 +104,9 @@ class Aircon(AirconBase):
     # The whole content[9] byte behind CompressorRunning: bit 0x01 = defrost,
     # bit 0x02 = compressor running.
     OperationStatusRaw: int | None = None
+    # The whole content[7] byte (CNS DB5). Meaning not established, kept raw
+    # for diagnostics.
+    StatusDb5Raw: int | None = None
     # Raw ModelNr byte (content[0] & 127) before mapping to the known 0/1/2
     # values - kept around so an unrecognized value (ModelNr == -1) is still
     # visible as a diagnostic, e.g. for unrecognized-model bug reports.
