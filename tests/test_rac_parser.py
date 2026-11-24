@@ -1196,11 +1196,13 @@ def _status(raw, coil=None, *, on=True, mode=2):
     [
         (_status(0x01, coil=150), True, False, True),
         (_status(0x03, coil=150), True, False, True),
-        (_status(0x02, coil=15), False, True, True),
+        (_status(0x02, coil=15), False, True, False),
         (_status(0x02, coil=150), False, False, False),
         (_status(0x01, coil=15), True, True, True),
         (_status(0x01, coil=15, mode=1), False, False, False),
         (_status(0x01, coil=15, on=False), None, None, None),
+        (_status(0x80, coil=15), False, True, False),
+        (_status(0x81, coil=150), True, False, True),
         (_status(None, coil=15), None, True, True),
         (_status(None, coil=150), None, False, False),
         (_status(0x01, coil=None), True, None, True),
@@ -1256,3 +1258,13 @@ def test_status_db5_raw_is_decoded_from_content_7(parser, db5):
 
     assert ac.StatusDb5Raw == db5
     assert ac.OperationStatusRaw == 0x01
+
+
+def test_operation_status_raw_is_unsigned(parser):
+    raw = bytearray(b64decode(LIVE_CAPTURES["heat_defrost_end"][0]))
+    raw[raw[18] * 4 + 21 + 9] = 0x81
+
+    ac = parser.translate_bytes(b64encode(bytes(raw)).decode())
+
+    assert ac.OperationStatusRaw == 0x81
+    assert defrost_status_bit(ac) is True
