@@ -13,7 +13,7 @@ Two kinds of ground truth are used here:
    so encoding then decoding should reproduce the original values.
 """
 
-from base64 import b64decode
+from base64 import b64decode, b64encode
 
 import pytest
 
@@ -1244,3 +1244,15 @@ def test_operation_status_raw_from_live_frames(parser):
     assert defrost_status_bit(after) is False
     assert defrost_detected(end) is True
     assert defrost_detected(after) is False
+
+
+@pytest.mark.parametrize("db5", [0x00, 0x10, 0xA5])
+def test_status_db5_raw_is_decoded_from_content_7(parser, db5):
+    raw = bytearray(b64decode(LIVE_CAPTURES["heat_defrost_end"][0]))
+    # content starts after the header: 4 bytes per entry in byte 18, plus 21.
+    raw[raw[18] * 4 + 21 + 7] = db5
+
+    ac = parser.translate_bytes(b64encode(bytes(raw)).decode())
+
+    assert ac.StatusDb5Raw == db5
+    assert ac.OperationStatusRaw == 0x01
