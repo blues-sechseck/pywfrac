@@ -35,6 +35,8 @@ from pywfrac.parser import (
     EXTERNAL_TEMPERATURE_MAX,
     EXTERNAL_TEMPERATURE_MIN,
     RCV_AIRFLOW_MASKS,
+    SERVICE_DATA_CODE_BY_FIELD,
+    SERVICE_DATA_OUTDOOR_COIL_RAW,
     RacParser,
 )
 from pywfrac.utils import find_match, indoorTempList
@@ -1124,11 +1126,13 @@ def test_command_to_byte_external_temperature_out_of_range_raises(parser):
         (None, 3.0, False),
     ],
 )
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 def test_defrost_possible(frequency, outdoor, expected):
     ac = Aircon(CompressorFrequency=frequency, OutdoorTemp=outdoor)
     assert defrost_possible(ac) is expected
 
 
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 def test_defrost_possible_without_a_reading():
     assert defrost_possible(None) is False
 
@@ -1268,3 +1272,35 @@ def test_operation_status_raw_is_unsigned(parser):
 
     assert ac.OperationStatusRaw == 0x81
     assert defrost_status_bit(ac) is True
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [(15, -9.5), (19, -5.0), (25, 0.4), (38, 9.5), (60, 20.7)],
+)
+def test_outdoor_coil_temp_converts_with_its_own_series_resistor(parser, raw, expected):
+    ac = Aircon()
+    parser._parse_temperatures(ac, [0x82 - 256, 0x20, raw, 0])
+    assert ac.OutdoorCoilRaw == raw
+    assert ac.OutdoorCoilTemp == pytest.approx(expected, abs=0.1)
+
+
+def test_outdoor_coil_temp_of_a_zero_byte_is_none(parser):
+    ac = Aircon()
+    parser._parse_temperatures(ac, [0x82 - 256, 0x20, 0, 0])
+    assert ac.OutdoorCoilRaw == 0
+    assert ac.OutdoorCoilTemp is None
+
+
+@pytest.mark.parametrize("raw", [367, 400])
+def test_coil_temp_above_the_adc_gain_is_none(raw):
+    assert RacParser._coil_temp(raw, 0x82, 1230.0) is None
+
+
+def test_outdoor_coil_temp_is_requested_by_field():
+    assert SERVICE_DATA_CODE_BY_FIELD["OutdoorCoilTemp"] == SERVICE_DATA_OUTDOOR_COIL_RAW
+
+
+def test_defrost_possible_is_deprecated():
+    with pytest.warns(DeprecationWarning, match="defrost_detected"):
+        defrost_possible(Aircon(CompressorFrequency=40.0, OutdoorTemp=3.0))
