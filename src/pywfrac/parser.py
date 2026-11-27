@@ -2,6 +2,7 @@
 
 import logging
 import math
+import warnings
 from base64 import b64decode, b64encode
 from typing import Final
 
@@ -52,12 +53,11 @@ SERVICE_DATA_EEV_PULSES: Final = 0x13
 # an outdoor unit.
 #
 # Every one of them is published as a raw byte as well as any converted value,
-# because the conversion for the indoor coils only holds over part of the
-# range: it is calibrated between roughly 47 and 120 (cooling) and breaks above
-# that, where the byte climbs to 252 in heating and every candidate formula
-# puts the coil above the discharge pipe feeding it, which is impossible.
-# Converting only inside the calibrated band keeps the reading honest; the raw
-# byte is what a calibration of the rest has to be measured against.
+# so a reading can always be checked against the byte it came from. The
+# outdoor coil converts with the same thermistor model as the indoor coils
+# behind its own series resistor (OUTDOOR_COIL_SERIES_RESISTOR); see the
+# conversion constants below for how far each channel is backed by
+# measurements.
 SERVICE_DATA_INDOOR_COIL_RAW: Final = 0x81
 SERVICE_DATA_OUTDOOR_COIL_RAW: Final = 0x82
 SERVICE_DATA_INDOOR_COIL_OUTLET_RAW: Final = 0x87
@@ -85,11 +85,13 @@ SILENT_OPERATION_WRITE_CODE: Final = 0x21
 # service manuals give for a broken sensor wire.
 SERVICE_DATA_HUMIDITY: Final = 0xAD
 HUMIDITY_UNKNOWN_BYTES: Final = (0, 30, 0xFF)
-# Defrost flag of the outdoor unit. The value is the low nibble of op1 behind
-# the answer class 1: 0x10 = not defrosting, 0x11 = defrosting (never seen).
+# Deprecated, use defrost_detected(). Defrost flag of the outdoor unit. The
+# value is the low nibble of op1 behind the answer class 1: 0x10 = not
+# defrosting, 0x11 = defrosting (never seen).
 # It has answered 0x10 throughout real defrosts, on two firmware branches, so
 # it is only a raw comparison value; defrost_detected() is the detection.
 SERVICE_DATA_DEFROST: Final = 0x0C
+# Deprecated together with defrost_possible(); use defrost_detected().
 # A defrost needs a cold outdoor coil after a long heating run, which the
 # service manual puts at a coil temperature below freezing. The outdoor air is
 # what we can see; 8 degrees C is a generous margin above that, so a defrost is
@@ -103,7 +105,7 @@ DEFROST_INDOOR_COIL_RAW_MAX: Final = 30
 # room-air-conditioner EEVs and is not confirmed for every model.
 EEV_FULL_OPEN_PULSES: Final = 500
 # Hot start of the indoor unit (cold-draft prevention in heating: the fan is
-# held back until the indoor coil is warm, about 29 degrees C). op1 is 0x02
+# held back until the indoor coil is warm, about 28-30 degrees C). op1 is 0x02
 # while it is active and 0x00 otherwise; a different model has answered 0x01,
 # which is not interpreted.
 SERVICE_DATA_HOT_START: Final = 0x0D
@@ -136,6 +138,7 @@ SERVICE_DATA_CODE_BY_FIELD: Final = {
     "IndoorCoilOutletTemp": SERVICE_DATA_INDOOR_COIL_OUTLET_RAW,
     "IndoorCoilOutletRaw": SERVICE_DATA_INDOOR_COIL_OUTLET_RAW,
     "OutdoorCoilRaw": SERVICE_DATA_OUTDOOR_COIL_RAW,
+    "OutdoorCoilTemp": SERVICE_DATA_OUTDOOR_COIL_RAW,
     "DischargeSuperheatRaw": SERVICE_DATA_DISCHARGE_SUPERHEAT_RAW,
     "ProtectionRaw": SERVICE_DATA_PROTECTION_RAW,
     "Protection": SERVICE_DATA_PROTECTION_RAW,
@@ -169,6 +172,13 @@ COIL_ADC_GAIN: Final = 367.0
 # 23-46 C. Readings were taken on matt tape stuck to the fins: bare aluminium
 # has an emissivity around 0.35 and reads far too low.
 COIL_SERIES_RESISTOR: Final = 1912.0
+# The outdoor coil channel (THO-R1) has its own series resistor. A five-hour
+# compressor standstill, with the coil at outdoor air temperature, against a
+# weather station put it at about 1230 Ohm. At the cold end the defrost
+# plateau (bytes 24-25 = 0 C over 22 cycles) and a second, separately fitted
+# sensor (within 0.1 K over ~3200 points down to -8 C) agree with it. Above
+# byte 65 (about 22 C) the curve is extrapolation.
+OUTDOOR_COIL_SERIES_RESISTOR: Final = 1230.0
 # Highest byte an actual thermometer was held against. Above this the curve is
 # extrapolation - physically motivated, but unverified, and byte 252 (seen on
 # a 36 C day) would put the coil at 72 C, past the 63 C overload cut-out that
@@ -288,6 +298,8 @@ def _protection_state(number: int) -> ProtectionState | None:
 def defrost_possible(airco: Aircon | None) -> bool:
     """Whether the outdoor unit can be defrosting right now.
 
+    Deprecated: emits DeprecationWarning; use defrost_detected().
+
     Needs the compressor running (0x11 above zero) and outdoor air below
     DEFROST_OUTDOOR_TEMP_MAX. False while the compressor reading is missing,
     so a reading that is not there never counts as a reason to ask.
@@ -295,6 +307,11 @@ def defrost_possible(airco: Aircon | None) -> bool:
     This is only a plausibility bound on the operating state, not a detection;
     see defrost_detected() for that.
     """
+    warnings.warn(
+        "defrost_possible() is deprecated, use defrost_detected()",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if airco is None or airco.CompressorFrequency is None:
         return False
     return airco.CompressorFrequency > 0 and airco.OutdoorTemp < DEFROST_OUTDOOR_TEMP_MAX
@@ -820,6 +837,8 @@ class RacParser:
         # Bit 0x02 is compressor running, bit 0x01 is defrost
         # (OPERATION_STATUS_DEFROST_BIT).
         ac_device.OperationStatusRaw = content[9] & 0xFF
+        # Bit 0x10 of content[7] is the echo of the command[8] we sent, not a
+        # unit state.
         ac_device.StatusDb5Raw = content[7] & 0xFF
         # The temperature the controller is working with, whatever its source:
         # every unit always reports one here, so the value alone says nothing
@@ -925,6 +944,9 @@ class RacParser:
             ac_device.IndoorCoilOutletTemp = RacParser._coil_temp(op2, code)
         elif code == SERVICE_DATA_OUTDOOR_COIL_RAW:
             ac_device.OutdoorCoilRaw = op2
+            ac_device.OutdoorCoilTemp = RacParser._coil_temp(
+                op2, code, OUTDOOR_COIL_SERIES_RESISTOR
+            )
         elif code == SERVICE_DATA_DISCHARGE_SUPERHEAT_RAW:
             ac_device.DischargeSuperheatRaw = op2
         elif code == SERVICE_DATA_PROTECTION_RAW:
@@ -963,12 +985,16 @@ class RacParser:
         return op2 / 2 + 32
 
     @staticmethod
-    def _coil_temp(op2: int, code: int) -> float | None:
+    def _coil_temp(
+        op2: int, code: int, series_resistor: float = COIL_SERIES_RESISTOR
+    ) -> float | None:
         """Convert a heat-exchanger thermistor byte to deg C.
 
         Inverts the divider the sensor sits in - see COIL_THERMISTOR_R25 - so
         the whole byte range converts, heating included. A byte of 0 is the
         divider's own limit and carries no temperature, so it yields None.
+        series_resistor is the channel's own: the indoor coils share
+        COIL_SERIES_RESISTOR, the outdoor coil has its own.
 
         The cold end sits on the three frost-protection thresholds the
         databook gives for this series - 8 C recovery, 5 C throttle, 2.5 C stop
@@ -976,7 +1002,9 @@ class RacParser:
         and 2.4 C at the nearest bytes, so it is good to about one count there.
         A reading against a thermometer at byte 75 backs the middle of the
         range (16.8 C measured, 17.0 C here). Above byte 170 the curve is
-        extrapolation: nothing has been held against the coil that hot.
+        extrapolation: nothing has been held against the coil that hot. These
+        figures are for the indoor channel; the outdoor one is described at
+        OUTDOOR_COIL_SERIES_RESISTOR.
         """
         if not 0 < op2 < COIL_ADC_GAIN:
             _LOGGER.debug(
@@ -985,7 +1013,7 @@ class RacParser:
                 code,
             )
             return None
-        resistance = COIL_SERIES_RESISTOR * (COIL_ADC_GAIN / op2 - 1.0)
+        resistance = series_resistor * (COIL_ADC_GAIN / op2 - 1.0)
         inverse_kelvin = math.log(resistance / COIL_THERMISTOR_R25) / COIL_THERMISTOR_B + 1 / 298.15
         return round(1 / inverse_kelvin - 273.15, 1)
 

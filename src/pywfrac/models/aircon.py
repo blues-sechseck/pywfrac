@@ -104,8 +104,9 @@ class Aircon(AirconBase):
     # The whole content[9] byte behind CompressorRunning: bit 0x01 = defrost,
     # bit 0x02 = compressor running.
     OperationStatusRaw: int | None = None
-    # The whole content[7] byte (CNS DB5). Meaning not established, kept raw
-    # for diagnostics.
+    # The whole content[7] byte. Bit 0x10 there is the echo of the last
+    # command[8] we sent, not a unit state flag; the other bits are not
+    # established. Kept raw for diagnostics.
     StatusDb5Raw: int | None = None
     # Raw ModelNr byte (content[0] & 127) before mapping to the known 0/1/2
     # values - kept around so an unrecognized value (ModelNr == -1) is still
@@ -144,6 +145,9 @@ class Aircon(AirconBase):
     IndoorCoilRaw: int | None = None  # THI-R1, per indoor unit
     IndoorCoilOutletRaw: int | None = None  # THI-R3, per indoor unit
     OutdoorCoilRaw: int | None = None  # THO-R1, shared by one outdoor unit
+    # deg C from OutdoorCoilRaw, same thermistor model as the indoor coils
+    # behind its own series resistor; extrapolated above about 22 C.
+    OutdoorCoilTemp: float | None = None
     DischargeSuperheatRaw: int | None = None  # TDSH
     ProtectionRaw: int | None = None  # protection number, answer untested
     Protection: ProtectionState | None = None  # None for a number without a member
@@ -151,9 +155,9 @@ class Aircon(AirconBase):
     SilentOperation: bool | None = None
     IndoorHumidity: int | None = None  # % relative; None for 0 (broken wire), 30 (no sensor), 255
     IndoorHumidityRaw: int | None = None
-    # Outdoor unit defrosting (0x0C); None for any answer other than 0x10/0x11.
-    # Stays 0x10 during real defrosts, so keep it as a raw comparison value and
-    # use parser.defrost_detected() instead.
+    # Deprecated, use parser.defrost_detected(). Outdoor unit defrosting
+    # (0x0C); None for any answer other than 0x10/0x11. Stays 0x10 during real
+    # defrosts, so it carries no defrost information.
     Defrosting: bool | None = None
     DefrostingRaw: int | None = None  # op1 as received
     # Indoor unit hot start (0x0D); None for any answer other than 0x00/0x02.
